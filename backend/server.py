@@ -66,6 +66,10 @@ async def init_db():
         return
     
     try:
+        # Temporarily disable database connection for testing
+        logger.warning("Database connection temporarily disabled for testing")
+        return
+        
         # Handle URL decoding for special characters in password
         db_url = DATABASE_URL.replace('%23', '#')
         db_pool = await asyncpg.create_pool(
