@@ -6,9 +6,9 @@ Build a complete, mobile-responsive web application named "Okaman" with a minima
 ## Architecture
 - **Frontend**: React 19 with Tailwind CSS, Shadcn UI components
 - **Backend**: FastAPI (Python)
-- **Database**: PostgreSQL (Supabase/NeonDB) - awaiting connection string
+- **Database**: PostgreSQL (Supabase) - CONNECTED
 - **Authentication**: JWT-based custom auth
-- **Integrations**: n8n webhook (placeholder), Dodo Payments (placeholder)
+- **Integrations**: n8n webhook (configured), Dodo Payments (placeholder)
 
 ## User Personas
 1. **Content Creators**: Need AI prompts for video generation tools
