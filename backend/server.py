@@ -69,7 +69,8 @@ async def init_db():
             DATABASE_URL, 
             min_size=2, 
             max_size=10,
-            ssl='require'
+            ssl='require',
+            statement_cache_size=0  # Disable prepared statements for pgbouncer compatibility
         )
         logger.info("Database connected successfully")
     except Exception as e:
