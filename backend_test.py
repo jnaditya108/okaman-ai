@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Backend API Testing for Okaman AI Prompt Generation App
-Tests non-DB dependent endpoints as database is not configured yet.
+Tests all endpoints including database functionality with Supabase.
 """
 
 import requests
 import sys
 import json
 from datetime import datetime
+import uuid
 
 class OkamanAPITester:
     def __init__(self, base_url="https://ai-prompt-lab-8.preview.emergentagent.com"):
@@ -15,6 +16,9 @@ class OkamanAPITester:
         self.tests_run = 0
         self.tests_passed = 0
         self.test_results = []
+        self.auth_token = None
+        self.test_user_email = f"test_{uuid.uuid4().hex[:8]}@example.com"
+        self.test_password = "TestPass123!"
 
     def log_test(self, name, success, details=""):
         """Log test result"""
