@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
@@ -36,7 +36,6 @@ import {
   Info,
   Mail,
   Loader2,
-  Check,
 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
@@ -48,13 +47,10 @@ const AI_MODELS = [
 ];
 
 export default function ChatPage() {
-  const { chatId } = useParams();
   const navigate = useNavigate();
   const { user, logout, updateCredits, getToken } = useAuth();
   
   const [chats, setChats] = useState([]);
-  const [currentChat, setCurrentChat] = useState(null);
-  const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [selectedModel, setSelectedModel] = useState('VEO 3');
   const [isLoading, setIsLoading] = useState(false);
@@ -76,23 +72,13 @@ export default function ChatPage() {
   // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [chats]);
 
   // Fetch chats on mount
   useEffect(() => {
     fetchChats();
     fetchPricingPlans();
   }, []);
-
-  // Load chat when chatId changes
-  useEffect(() => {
-    if (chatId) {
-      loadChat(chatId);
-    } else {
-      setCurrentChat(null);
-      setMessages([]);
-    }
-  }, [chatId]);
 
   const fetchChats = async () => {
     try {
@@ -112,43 +98,11 @@ export default function ChatPage() {
     }
   };
 
-  const loadChat = async (id) => {
-    try {
-      const [chatResponse, messagesResponse] = await Promise.all([
-        axios.get(`${API_URL}/api/chats/${id}`, authHeaders),
-        axios.get(`${API_URL}/api/chats/${id}/messages`, authHeaders)
-      ]);
-      setCurrentChat(chatResponse.data);
-      setMessages(messagesResponse.data);
-    } catch (error) {
-      console.error('Error loading chat:', error);
-      navigate('/chat');
-    }
-  };
-
-  const createNewChat = async () => {
-    try {
-      const response = await axios.post(
-        `${API_URL}/api/chats`,
-        { title: 'New Chat' },
-        authHeaders
-      );
-      setChats([response.data, ...chats]);
-      navigate(`/chat/${response.data.chat_id}`);
-      setIsSidebarOpen(false);
-    } catch (error) {
-      toast.error('Failed to create new chat');
-    }
-  };
-
   const deleteChat = async (id, e) => {
     e.stopPropagation();
     try {
       await axios.delete(`${API_URL}/api/chats/${id}`, authHeaders);
-      setChats(chats.filter(c => c.chat_id !== id));
-      if (chatId === id) {
-        navigate('/chat');
-      }
+      setChats(chats.filter(c => c.id !== id));
       toast.success('Chat deleted');
     } catch (error) {
       toast.error('Failed to delete chat');
@@ -164,64 +118,26 @@ export default function ChatPage() {
       return;
     }
 
-    // Create chat if none exists
-    let targetChatId = chatId;
-    if (!targetChatId) {
-      try {
-        const response = await axios.post(
-          `${API_URL}/api/chats`,
-          { title: inputValue.slice(0, 50) },
-          authHeaders
-        );
-        targetChatId = response.data.chat_id;
-        setChats([response.data, ...chats]);
-        navigate(`/chat/${targetChatId}`, { replace: true });
-      } catch (error) {
-        toast.error('Failed to create chat');
-        return;
-      }
-    }
-
     const userMessage = inputValue;
     setInputValue('');
     setIsLoading(true);
-
-    // Optimistically add user message
-    const tempUserMsg = {
-      message_id: 'temp-user-' + Date.now(),
-      role: 'user',
-      content: userMessage,
-      model: selectedModel,
-      created_at: new Date().toISOString()
-    };
-    setMessages(prev => [...prev, tempUserMsg]);
 
     try {
       const response = await axios.post(
         `${API_URL}/api/chat/send`,
         {
-          chat_id: targetChatId,
           content: userMessage,
           model: selectedModel
         },
         authHeaders
       );
 
-      // Replace temp message with real ones
-      setMessages(prev => {
-        const filtered = prev.filter(m => m.message_id !== tempUserMsg.message_id);
-        return [...filtered, response.data.user_message, response.data.ai_message];
-      });
+      // Add new chat to list
+      setChats(prev => [response.data.chat, ...prev]);
 
       // Update credits
       updateCredits(response.data.remaining_credits);
-      
-      // Refresh chats list
-      fetchChats();
     } catch (error) {
-      // Remove temp message on error
-      setMessages(prev => prev.filter(m => m.message_id !== tempUserMsg.message_id));
-      
       if (error.response?.status === 402) {
         setShowRefillModal(true);
       } else {
@@ -233,11 +149,10 @@ export default function ChatPage() {
   };
 
   const stopGeneration = async () => {
-    if (!chatId) return;
     try {
       await axios.post(
         `${API_URL}/api/chat/stop`,
-        { chat_id: chatId },
+        { chat_id: 'current' },
         authHeaders
       );
       setIsLoading(false);
@@ -247,15 +162,15 @@ export default function ChatPage() {
     }
   };
 
-  const submitFeedback = async (messageId, value) => {
+  const submitFeedback = async (chatId, isPositive) => {
     try {
       await axios.post(
         `${API_URL}/api/feedback`,
-        { message_id: messageId, value },
+        { chat_id: chatId, is_positive: isPositive },
         authHeaders
       );
-      setFeedbackGiven(prev => ({ ...prev, [messageId]: value }));
-      toast.success(value === 1 ? 'Thanks for the feedback!' : 'Thanks, we\'ll improve!');
+      setFeedbackGiven(prev => ({ ...prev, [chatId]: isPositive }));
+      toast.success(isPositive ? 'Thanks for the feedback!' : 'Thanks, we\'ll improve!');
     } catch (error) {
       toast.error('Failed to submit feedback');
     }
@@ -268,7 +183,6 @@ export default function ChatPage() {
         { plan_id: planId },
         authHeaders
       );
-      // Open checkout URL
       window.open(response.data.checkout_url, '_blank');
       toast.info('Payment window opened. Complete payment to add credits.');
     } catch (error) {
@@ -309,48 +223,35 @@ export default function ChatPage() {
             </button>
           </div>
 
-          {/* New Chat Button */}
-          <div className="p-4">
-            <Button
-              onClick={createNewChat}
-              className="w-full bg-white text-black hover:bg-zinc-200 rounded-full font-medium"
-              data-testid="new-chat-button"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              New Chat
-            </Button>
+          {/* Chat History Label */}
+          <div className="px-4 py-3 border-b border-white/5">
+            <span className="text-xs text-zinc-500 uppercase tracking-wider">Chat History</span>
           </div>
 
           {/* Chat History */}
-          <ScrollArea className="flex-1 px-2">
+          <ScrollArea className="flex-1 px-2 py-2">
             <div className="space-y-1">
-              {chats.map((chat) => (
-                <button
-                  key={chat.chat_id}
-                  onClick={() => {
-                    navigate(`/chat/${chat.chat_id}`);
-                    setIsSidebarOpen(false);
-                  }}
-                  className={`
-                    w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left
-                    group transition-colors
-                    ${chatId === chat.chat_id 
-                      ? 'bg-white/10 text-white' 
-                      : 'text-zinc-400 hover:bg-white/5 hover:text-white'}
-                  `}
-                  data-testid={`chat-item-${chat.chat_id}`}
-                >
-                  <MessageSquare className="w-4 h-4 shrink-0" />
-                  <span className="flex-1 truncate text-sm">{chat.title}</span>
-                  <button
-                    onClick={(e) => deleteChat(chat.chat_id, e)}
-                    className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400"
-                    data-testid={`delete-chat-${chat.chat_id}`}
+              {chats.length === 0 ? (
+                <p className="text-zinc-500 text-sm text-center py-4">No chats yet</p>
+              ) : (
+                chats.map((chat) => (
+                  <div
+                    key={chat.id}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left group transition-colors text-zinc-400 hover:bg-white/5 hover:text-white"
+                    data-testid={`chat-item-${chat.id}`}
                   >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </button>
-              ))}
+                    <MessageSquare className="w-4 h-4 shrink-0" />
+                    <span className="flex-1 truncate text-sm">{chat.user_prompt?.slice(0, 30) || 'Chat'}...</span>
+                    <button
+                      onClick={(e) => deleteChat(chat.id, e)}
+                      className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400"
+                      data-testid={`delete-chat-${chat.id}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </ScrollArea>
 
@@ -420,7 +321,7 @@ export default function ChatPage() {
               Contact Us
             </button>
             <Button
-              onClick={createNewChat}
+              onClick={() => navigate('/')}
               variant="ghost"
               className="hidden sm:flex text-zinc-400 hover:text-white"
               data-testid="header-new-chat"
@@ -445,175 +346,180 @@ export default function ChatPage() {
 
         {/* Chat Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
-          {!chatId && messages.length === 0 ? (
-            // Welcome Screen
-            <div className="flex-1 flex items-center justify-center p-6">
-              <div className="text-center max-w-2xl animate-fade-in">
-                <Sparkles className="w-16 h-16 text-white mx-auto mb-6" />
-                <h1 className="font-heading text-3xl md:text-4xl font-bold text-white mb-4">
-                  Welcome to Okaman
-                </h1>
-                <p className="text-zinc-400 text-lg mb-8">
-                  AI prompt generation for Sora, Veo3, and other AI video generation tools.
-                </p>
-                <div className="flex flex-wrap justify-center gap-3">
-                  {AI_MODELS.map((model) => (
-                    <button
-                      key={model.id}
-                      onClick={() => setSelectedModel(model.id)}
-                      className={`
-                        px-4 py-2 rounded-full text-sm border transition-colors
-                        ${selectedModel === model.id 
-                          ? 'bg-white text-black border-white' 
-                          : 'border-white/20 text-zinc-400 hover:border-white/40 hover:text-white'}
-                      `}
-                    >
-                      {model.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : (
-            // Messages
+          {/* Welcome Screen / Chat Input Area */}
+          <div className="flex-1 flex flex-col">
+            {/* Messages Area */}
             <ScrollArea className="flex-1">
-              <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-                {messages.map((message, index) => (
-                  <div
-                    key={message.message_id}
-                    className={`animate-fade-in ${message.role === 'user' ? 'ml-auto max-w-[85%]' : 'mr-auto max-w-[85%]'}`}
-                    style={{ animationDelay: `${index * 50}ms` }}
-                  >
-                    <div
-                      className={`
-                        rounded-2xl px-4 py-3
-                        ${message.role === 'user' 
-                          ? 'message-user' 
-                          : 'message-assistant'}
-                      `}
-                    >
-                      {message.role === 'assistant' && message.model && (
-                        <div className="text-xs text-zinc-500 mb-2 font-mono">
-                          {message.model}
-                        </div>
-                      )}
-                      <p className="text-zinc-100 whitespace-pre-wrap">
-                        {message.content}
+              <div className="max-w-3xl mx-auto px-4 py-6">
+                {chats.length === 0 ? (
+                  // Welcome Screen
+                  <div className="flex items-center justify-center min-h-[60vh]">
+                    <div className="text-center max-w-2xl animate-fade-in">
+                      <Sparkles className="w-16 h-16 text-white mx-auto mb-6" />
+                      <h1 className="font-heading text-3xl md:text-4xl font-bold text-white mb-4">
+                        Welcome to Okaman
+                      </h1>
+                      <p className="text-zinc-400 text-lg mb-8">
+                        AI prompt generation for Sora, Veo3, and other AI video generation tools.
                       </p>
+                      <div className="flex flex-wrap justify-center gap-3">
+                        {AI_MODELS.map((model) => (
+                          <button
+                            key={model.id}
+                            onClick={() => setSelectedModel(model.id)}
+                            className={`
+                              px-4 py-2 rounded-full text-sm border transition-colors
+                              ${selectedModel === model.id 
+                                ? 'bg-white text-black border-white' 
+                                : 'border-white/20 text-zinc-400 hover:border-white/40 hover:text-white'}
+                            `}
+                          >
+                            {model.name}
+                          </button>
+                        ))}
+                      </div>
                     </div>
+                  </div>
+                ) : (
+                  // Chat Messages
+                  <div className="space-y-6">
+                    {[...chats].reverse().map((chat, index) => (
+                      <div key={chat.id} className="space-y-4 animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
+                        {/* User Message */}
+                        <div className="ml-auto max-w-[85%]">
+                          <div className="message-user rounded-2xl px-4 py-3">
+                            <p className="text-zinc-100 whitespace-pre-wrap">
+                              {chat.user_prompt}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        {/* AI Response */}
+                        <div className="mr-auto max-w-[85%]">
+                          <div className="message-assistant rounded-2xl px-4 py-3">
+                            {chat.model_used && (
+                              <div className="text-xs text-zinc-500 mb-2 font-mono">
+                                {chat.model_used}
+                              </div>
+                            )}
+                            <p className="text-zinc-100 whitespace-pre-wrap">
+                              {chat.ai_response}
+                            </p>
+                          </div>
+                          
+                          {/* Feedback buttons */}
+                          <div className="flex items-center gap-2 mt-2 ml-2">
+                            <button
+                              onClick={() => submitFeedback(chat.id, true)}
+                              className={`
+                                p-1.5 rounded-lg transition-colors
+                                ${feedbackGiven[chat.id] === true 
+                                  ? 'text-green-400 bg-green-400/10' 
+                                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
+                              `}
+                              data-testid={`feedback-up-${chat.id}`}
+                            >
+                              <ThumbsUp className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => submitFeedback(chat.id, false)}
+                              className={`
+                                p-1.5 rounded-lg transition-colors
+                                ${feedbackGiven[chat.id] === false 
+                                  ? 'text-red-400 bg-red-400/10' 
+                                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
+                              `}
+                              data-testid={`feedback-down-${chat.id}`}
+                            >
+                              <ThumbsDown className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                     
-                    {/* Feedback buttons for AI messages */}
-                    {message.role === 'assistant' && !message.message_id.startsWith('temp-') && (
-                      <div className="flex items-center gap-2 mt-2 ml-2">
-                        <button
-                          onClick={() => submitFeedback(message.message_id, 1)}
-                          className={`
-                            p-1.5 rounded-lg transition-colors
-                            ${feedbackGiven[message.message_id] === 1 
-                              ? 'text-green-400 bg-green-400/10' 
-                              : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
-                          `}
-                          data-testid={`feedback-up-${message.message_id}`}
-                        >
-                          <ThumbsUp className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => submitFeedback(message.message_id, 0)}
-                          className={`
-                            p-1.5 rounded-lg transition-colors
-                            ${feedbackGiven[message.message_id] === 0 
-                              ? 'text-red-400 bg-red-400/10' 
-                              : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
-                          `}
-                          data-testid={`feedback-down-${message.message_id}`}
-                        >
-                          <ThumbsDown className="w-4 h-4" />
-                        </button>
+                    {/* Loading indicator */}
+                    {isLoading && (
+                      <div className="mr-auto max-w-[85%] animate-fade-in">
+                        <div className="message-assistant rounded-2xl px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="flex gap-1">
+                              <span className="w-2 h-2 bg-zinc-400 rounded-full loading-dot" />
+                              <span className="w-2 h-2 bg-zinc-400 rounded-full loading-dot" />
+                              <span className="w-2 h-2 bg-zinc-400 rounded-full loading-dot" />
+                            </div>
+                            <span className="text-zinc-500 text-sm">Generating...</span>
+                          </div>
+                        </div>
                       </div>
                     )}
-                  </div>
-                ))}
-                
-                {/* Loading indicator */}
-                {isLoading && (
-                  <div className="mr-auto max-w-[85%] animate-fade-in">
-                    <div className="message-assistant rounded-2xl px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex gap-1">
-                          <span className="w-2 h-2 bg-zinc-400 rounded-full loading-dot" />
-                          <span className="w-2 h-2 bg-zinc-400 rounded-full loading-dot" />
-                          <span className="w-2 h-2 bg-zinc-400 rounded-full loading-dot" />
-                        </div>
-                        <span className="text-zinc-500 text-sm">Generating...</span>
-                      </div>
-                    </div>
+                    
+                    <div ref={messagesEndRef} />
                   </div>
                 )}
-                
-                <div ref={messagesEndRef} />
               </div>
             </ScrollArea>
-          )}
 
-          {/* Input Area */}
-          <div className="p-4">
-            <div className="max-w-3xl mx-auto">
-              <div className="chat-input rounded-2xl p-3">
-                <div className="flex items-center gap-3 mb-3">
-                  <Select value={selectedModel} onValueChange={setSelectedModel}>
-                    <SelectTrigger 
-                      className="w-36 bg-transparent border-white/10 text-white h-8 text-sm"
-                      data-testid="model-selector"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-[#121212] border-white/10">
-                      {AI_MODELS.map((model) => (
-                        <SelectItem 
-                          key={model.id} 
-                          value={model.id}
-                          className="text-white focus:bg-white/10"
-                        >
-                          {model.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="flex items-end gap-3">
-                  <textarea
-                    ref={inputRef}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Describe your video idea..."
-                    className="flex-1 bg-transparent border-0 resize-none text-white placeholder:text-zinc-600 focus:outline-none focus:ring-0 min-h-[24px] max-h-[200px]"
-                    rows={1}
-                    data-testid="chat-input"
-                  />
+            {/* Input Area */}
+            <div className="p-4">
+              <div className="max-w-3xl mx-auto">
+                <div className="chat-input rounded-2xl p-3">
+                  <div className="flex items-center gap-3 mb-3">
+                    <Select value={selectedModel} onValueChange={setSelectedModel}>
+                      <SelectTrigger 
+                        className="w-36 bg-transparent border-white/10 text-white h-8 text-sm"
+                        data-testid="model-selector"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-[#121212] border-white/10">
+                        {AI_MODELS.map((model) => (
+                          <SelectItem 
+                            key={model.id} 
+                            value={model.id}
+                            className="text-white focus:bg-white/10"
+                          >
+                            {model.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   
-                  <div className="flex items-center gap-2">
-                    {isLoading ? (
-                      <Button
-                        onClick={stopGeneration}
-                        size="icon"
-                        className="bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-full"
-                        data-testid="stop-button"
-                      >
-                        <Square className="w-4 h-4" />
-                      </Button>
-                    ) : (
-                      <Button
-                        onClick={sendMessage}
-                        size="icon"
-                        disabled={!inputValue.trim()}
-                        className="bg-white text-black hover:bg-zinc-200 rounded-full disabled:opacity-50"
-                        data-testid="send-button"
-                      >
-                        <Send className="w-4 h-4" />
-                      </Button>
-                    )}
+                  <div className="flex items-end gap-3">
+                    <textarea
+                      ref={inputRef}
+                      value={inputValue}
+                      onChange={(e) => setInputValue(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Describe your video idea..."
+                      className="flex-1 bg-transparent border-0 resize-none text-white placeholder:text-zinc-600 focus:outline-none focus:ring-0 min-h-[24px] max-h-[200px]"
+                      rows={1}
+                      data-testid="chat-input"
+                    />
+                    
+                    <div className="flex items-center gap-2">
+                      {isLoading ? (
+                        <Button
+                          onClick={stopGeneration}
+                          size="icon"
+                          className="bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-full"
+                          data-testid="stop-button"
+                        >
+                          <Square className="w-4 h-4" />
+                        </Button>
+                      ) : (
+                        <Button
+                          onClick={sendMessage}
+                          size="icon"
+                          disabled={!inputValue.trim()}
+                          className="bg-white text-black hover:bg-zinc-200 rounded-full disabled:opacity-50"
+                          data-testid="send-button"
+                        >
+                          <Send className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -723,12 +629,6 @@ export default function ChatPage() {
               TODO: ADD YOUR BIO HERE
               ============================================================
               Replace the placeholder text below with your actual bio.
-              You can include:
-              - Your name and title
-              - Company information
-              - Mission statement
-              - Contact details
-              - Social media links
               ============================================================
             */}
             <p>
@@ -755,12 +655,6 @@ export default function ChatPage() {
             {/* 
               ============================================================
               TODO: ADD YOUR CONTACT INFORMATION HERE
-              ============================================================
-              Replace the placeholder text below with your contact details:
-              - Email address
-              - Phone number
-              - Social media handles
-              - Support hours
               ============================================================
             */}
             <p>Have questions or feedback? We'd love to hear from you!</p>
