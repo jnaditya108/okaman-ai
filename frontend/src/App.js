@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import ChatPage from "./pages/ChatPage";
@@ -48,7 +49,10 @@ function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<Navigate to="/login" replace />} />
+            {/* Landing page - accessible to everyone */}
+            <Route path="/" element={<LandingPage />} />
+            
+            {/* Auth routes - redirect to chat if logged in */}
             <Route
               path="/login"
               element={
@@ -65,6 +69,8 @@ function App() {
                 </PublicRoute>
               }
             />
+            
+            {/* Protected chat routes */}
             <Route
               path="/chat"
               element={
