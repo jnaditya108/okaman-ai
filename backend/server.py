@@ -13,7 +13,6 @@ import asyncpg
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 import httpx
-from urllib.parse import unquote
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -66,23 +65,16 @@ async def init_db():
         return
     
     try:
-        # Temporarily disable database connection for testing
-        logger.warning("Database connection temporarily disabled for testing")
-        return
-        
-        # Handle URL decoding for special characters in password
-        db_url = DATABASE_URL.replace('%23', '#')
         db_pool = await asyncpg.create_pool(
-            db_url, 
+            DATABASE_URL, 
             min_size=2, 
             max_size=10,
             ssl='require',
-            statement_cache_size=0  # Disable prepared statements for pgbouncer compatibility
+            statement_cache_size=0
         )
         logger.info("Database connected successfully")
     except Exception as e:
         logger.error(f"Database connection failed: {e}")
-        raise
 
 async def close_db():
     """Close database connection pool"""
