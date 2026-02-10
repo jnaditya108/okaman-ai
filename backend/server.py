@@ -66,8 +66,10 @@ async def init_db():
         return
     
     try:
+        # Handle URL decoding for special characters in password
+        db_url = DATABASE_URL.replace('%23', '#')
         db_pool = await asyncpg.create_pool(
-            DATABASE_URL, 
+            db_url, 
             min_size=2, 
             max_size=10,
             ssl='require',
