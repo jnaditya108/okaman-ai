@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
@@ -82,23 +82,8 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // Fetch chat sessions on mount
-  useEffect(() => {
-    fetchChatSessions();
-    fetchPricingPlans();
-  }, []);
-
-  // Load specific chat when chatId changes
-  useEffect(() => {
-    if (chatId) {
-      fetchChat(chatId);
-    } else {
-      setCurrentChat(null);
-      setMessages([]);
-    }
-  }, [chatId]);
-
-  const fetchChatSessions = async () => {
+  // Define fetch functions with useCallback
+  const fetchChatSessions = useCallback(async () => {
     try {
       const response = await axios.get(`${API_URL}/api/chats`, authHeaders);
       setChatSessions(response.data);
@@ -106,9 +91,9 @@ export default function ChatPage() {
       console.error('Error fetching chats:', error);
       toast.error('Failed to load chats');
     }
-  };
+  }, [authHeaders]);
 
-  const fetchChat = async (id) => {
+  const fetchChat = useCallback(async (id) => {
     try {
       const response = await axios.get(`${API_URL}/api/chats/${id}`, authHeaders);
       setCurrentChat(response.data);
@@ -118,16 +103,32 @@ export default function ChatPage() {
       console.error('Error fetching chat:', error);
       toast.error('Failed to load chat');
     }
-  };
+  }, [authHeaders]);
 
-  const fetchPricingPlans = async () => {
+  const fetchPricingPlans = useCallback(async () => {
     try {
       const response = await axios.get(`${API_URL}/api/payments/plans`);
       setPricingPlans(response.data);
     } catch (error) {
       console.error('Error fetching pricing plans:', error);
     }
-  };
+  }, []);
+
+  // Fetch chat sessions on mount
+  useEffect(() => {
+    fetchChatSessions();
+    fetchPricingPlans();
+  }, [fetchChatSessions, fetchPricingPlans]);
+
+  // Load specific chat when chatId changes
+  useEffect(() => {
+    if (chatId) {
+      fetchChat(chatId);
+    } else {
+      setCurrentChat(null);
+      setMessages([]);
+    }
+  }, [chatId, fetchChat]);
 
   const deleteChat = async (id, e) => {
     e.stopPropagation();
