@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Sparkles, Zap, Video, MessageSquare, ArrowRight, Check } from 'lucide-react';
-
+  
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[#0A0A0A] overflow-hidden">

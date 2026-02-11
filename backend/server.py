@@ -107,13 +107,29 @@ class TokenResponse(BaseModel):
     user: UserResponse
 
 # Chat Models
-class ChatResponse(BaseModel):
+class MessageResponse(BaseModel):
+    id: str
+    chat_id: str
+    role: str  # 'user' or 'assistant'
+    content: str
+    created_at: datetime
+
+class ChatSessionResponse(BaseModel):
     id: str
     user_id: str
-    model_used: Optional[str]
-    user_prompt: Optional[str]
-    ai_response: Optional[str]
+    title: str
+    model: str
+    messages: List[MessageResponse]
     created_at: datetime
+    updated_at: datetime
+
+class ChatSessionListResponse(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    model: str
+    created_at: datetime
+    updated_at: datetime
 
 class SendMessageRequest(BaseModel):
     chat_id: Optional[str] = None
@@ -121,7 +137,7 @@ class SendMessageRequest(BaseModel):
     model: str = "VEO 3"
 
 class SendMessageResponse(BaseModel):
-    chat: ChatResponse
+    message: MessageResponse
     remaining_credits: int
 
 class StopGenerationRequest(BaseModel):
@@ -129,12 +145,12 @@ class StopGenerationRequest(BaseModel):
 
 # Feedback Models
 class FeedbackCreate(BaseModel):
-    chat_id: str
+    message_id: str
     is_positive: bool
 
 class FeedbackResponse(BaseModel):
     id: str
-    chat_id: str
+    message_id: str
     is_positive: bool
 
 # Payment Models
@@ -282,67 +298,95 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 # ============================================================
 # CHAT ENDPOINTS (Adapted to your Supabase schema)
 # ============================================================
-@api_router.get("/chats", response_model=List[ChatResponse])
+@api_router.get("/chats", response_model=List[ChatSessionListResponse])
 async def get_chats(current_user: dict = Depends(get_current_user)):
-    """Get all chats for current user"""
+    """Get all chat sessions for current user"""
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database not available")
     
     async with db_pool.acquire() as conn:
         chats = await conn.fetch(
-            '''SELECT id, user_id, model_used, user_prompt, ai_response, created_at 
-               FROM chats WHERE user_id = $1 ORDER BY created_at DESC''',
+            '''SELECT id, user_id, title, model, created_at, updated_at
+               FROM chat_sessions 
+               WHERE user_id = $1 
+               ORDER BY updated_at DESC''',
             current_user["user_id"]
         )
     
     return [
-        ChatResponse(
+        ChatSessionListResponse(
             id=str(c["id"]),
             user_id=str(c["user_id"]),
-            model_used=c["model_used"],
-            user_prompt=c["user_prompt"],
-            ai_response=c["ai_response"],
-            created_at=c["created_at"]
+            title=c["title"],
+            model=c["model"],
+            created_at=c["created_at"],
+            updated_at=c["updated_at"]
         ) for c in chats
     ]
 
-@api_router.get("/chats/{chat_id}", response_model=ChatResponse)
+@api_router.get("/chats/{chat_id}", response_model=ChatSessionResponse)
 async def get_chat(chat_id: str, current_user: dict = Depends(get_current_user)):
-    """Get a specific chat"""
+    """Get a specific chat session with all messages"""
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database not available")
     
     async with db_pool.acquire() as conn:
         chat = await conn.fetchrow(
-            '''SELECT id, user_id, model_used, user_prompt, ai_response, created_at 
-               FROM chats WHERE id = $1 AND user_id = $2''',
+            '''SELECT id, user_id, title, model, created_at, updated_at
+               FROM chat_sessions 
+               WHERE id = $1 AND user_id = $2''',
             uuid.UUID(chat_id), current_user["user_id"]
         )
+        
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        
+        messages = await conn.fetch(
+            '''SELECT id, chat_id, role, content, created_at
+               FROM messages 
+               WHERE chat_id = $1 
+               ORDER BY created_at ASC''',
+            uuid.UUID(chat_id)
+        )
     
-    if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    
-    return ChatResponse(
+    return ChatSessionResponse(
         id=str(chat["id"]),
         user_id=str(chat["user_id"]),
-        model_used=chat["model_used"],
-        user_prompt=chat["user_prompt"],
-        ai_response=chat["ai_response"],
-        created_at=chat["created_at"]
+        title=chat["title"],
+        model=chat["model"],
+        messages=[
+            MessageResponse(
+                id=str(m["id"]),
+                chat_id=str(m["chat_id"]),
+                role=m["role"],
+                content=m["content"],
+                created_at=m["created_at"]
+            ) for m in messages
+        ],
+        created_at=chat["created_at"],
+        updated_at=chat["updated_at"]
     )
 
 @api_router.delete("/chats/{chat_id}")
 async def delete_chat(chat_id: str, current_user: dict = Depends(get_current_user)):
-    """Delete a chat"""
+    """Delete a chat session and all its messages"""
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database not available")
     
     async with db_pool.acquire() as conn:
-        # Delete feedback first (foreign key constraint)
-        await conn.execute('DELETE FROM feedback WHERE chat_id = $1', uuid.UUID(chat_id))
-        # Then delete chat
+        # Delete feedback first (if exists)
+        await conn.execute(
+            '''DELETE FROM feedback 
+               WHERE message_id IN (
+                   SELECT id FROM messages WHERE chat_id = $1
+               )''',
+            uuid.UUID(chat_id)
+        )
+        # Delete messages
+        await conn.execute('DELETE FROM messages WHERE chat_id = $1', uuid.UUID(chat_id))
+        # Delete chat session
         result = await conn.execute(
-            'DELETE FROM chats WHERE id = $1 AND user_id = $2',
+            'DELETE FROM chat_sessions WHERE id = $1 AND user_id = $2',
             uuid.UUID(chat_id), current_user["user_id"]
         )
     
@@ -367,6 +411,36 @@ async def send_message(request: SendMessageRequest, current_user: dict = Depends
         user = await conn.fetchrow('SELECT current_credits FROM users WHERE user_id = $1', user_id)
         if user["current_credits"] <= 0:
             raise HTTPException(status_code=402, detail="Insufficient credits. Please refill.")
+        
+        # Create or get chat session
+        chat_id = None
+        if request.chat_id:
+            # Verify chat exists
+            chat = await conn.fetchrow(
+                'SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2',
+                uuid.UUID(request.chat_id), user_id
+            )
+            if not chat:
+                raise HTTPException(status_code=404, detail="Chat not found")
+            chat_id = uuid.UUID(request.chat_id)
+        else:
+            # Create new chat session
+            chat_id = uuid.uuid4()
+            # Generate title from first message
+            title = request.content[:50] + "..." if len(request.content) > 50 else request.content
+            await conn.execute(
+                '''INSERT INTO chat_sessions (id, user_id, title, model)
+                   VALUES ($1, $2, $3, $4)''',
+                chat_id, user_id, title, request.model
+            )
+        
+        # Save user message
+        user_message = await conn.fetchrow(
+            '''INSERT INTO messages (chat_id, role, content)
+               VALUES ($1, 'user', $2)
+               RETURNING id, chat_id, role, content, created_at''',
+            chat_id, request.content
+        )
         
         # Call n8n webhook
         ai_response_content = "AI response placeholder - n8n webhook not configured"
@@ -402,22 +476,27 @@ async def send_message(request: SendMessageRequest, current_user: dict = Depends
             new_credits, user_id
         )
         
-        # Save chat to database (your schema)
-        chat = await conn.fetchrow(
-            '''INSERT INTO chats (user_id, model_used, user_prompt, ai_response)
-               VALUES ($1, $2, $3, $4)
-               RETURNING id, user_id, model_used, user_prompt, ai_response, created_at''',
-            user_id, request.model, request.content, ai_response_content
+        # Save AI response message
+        ai_message = await conn.fetchrow(
+            '''INSERT INTO messages (chat_id, role, content)
+               VALUES ($1, 'assistant', $2)
+               RETURNING id, chat_id, role, content, created_at''',
+            chat_id, ai_response_content
+        )
+        
+        # Update chat session timestamp
+        await conn.execute(
+            'UPDATE chat_sessions SET updated_at = NOW() WHERE id = $1',
+            chat_id
         )
     
     return SendMessageResponse(
-        chat=ChatResponse(
-            id=str(chat["id"]),
-            user_id=str(chat["user_id"]),
-            model_used=chat["model_used"],
-            user_prompt=chat["user_prompt"],
-            ai_response=chat["ai_response"],
-            created_at=chat["created_at"]
+        message=MessageResponse(
+            id=str(ai_message["id"]),
+            chat_id=str(ai_message["chat_id"]),
+            role=ai_message["role"],
+            content=ai_message["content"],
+            created_at=ai_message["created_at"]
         ),
         remaining_credits=new_credits
     )
@@ -442,41 +521,41 @@ async def stop_generation(request: StopGenerationRequest, current_user: dict = D
     return {"message": "Stop signal sent"}
 
 # ============================================================
-# FEEDBACK ENDPOINT (Adapted to your schema)
+# FEEDBACK ENDPOINT (Adapted to message-based schema)
 # ============================================================
 @api_router.post("/feedback", response_model=FeedbackResponse)
 async def submit_feedback(feedback_data: FeedbackCreate, current_user: dict = Depends(get_current_user)):
-    """Submit feedback for a chat"""
+    """Submit feedback for a message"""
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database not available")
     
     async with db_pool.acquire() as conn:
         # Check if feedback already exists
         existing = await conn.fetchrow(
-            'SELECT id FROM feedback WHERE chat_id = $1',
-            uuid.UUID(feedback_data.chat_id)
+            'SELECT id FROM feedback WHERE message_id = $1',
+            uuid.UUID(feedback_data.message_id)
         )
         
         if existing:
             # Update existing feedback
             feedback = await conn.fetchrow(
                 '''UPDATE feedback SET is_positive = $1
-                   WHERE chat_id = $2
-                   RETURNING id, chat_id, is_positive''',
-                feedback_data.is_positive, uuid.UUID(feedback_data.chat_id)
+                   WHERE message_id = $2
+                   RETURNING id, message_id, is_positive''',
+                feedback_data.is_positive, uuid.UUID(feedback_data.message_id)
             )
         else:
             # Create new feedback
             feedback = await conn.fetchrow(
-                '''INSERT INTO feedback (chat_id, is_positive)
+                '''INSERT INTO feedback (message_id, is_positive)
                    VALUES ($1, $2)
-                   RETURNING id, chat_id, is_positive''',
-                uuid.UUID(feedback_data.chat_id), feedback_data.is_positive
+                   RETURNING id, message_id, is_positive''',
+                uuid.UUID(feedback_data.message_id), feedback_data.is_positive
             )
     
     return FeedbackResponse(
         id=str(feedback["id"]),
-        chat_id=str(feedback["chat_id"]),
+        message_id=str(feedback["message_id"]),
         is_positive=feedback["is_positive"]
     )
 

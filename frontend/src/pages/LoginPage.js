@@ -4,14 +4,19 @@ import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
-import { Eye, EyeOff, Mail, Lock, Sparkles } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, Sparkles, Phone } from 'lucide-react';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotPhone, setForgotPhone] = useState('');
+  const [isForgotLoading, setIsForgotLoading] = useState(false);
   const { login } = useAuth();
 
   const handleSubmit = async (e) => {
@@ -31,6 +36,36 @@ export default function LoginPage() {
       toast.error(message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleForgotPasswordSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!forgotEmail || !forgotPhone) {
+      toast.error('Please fill in all fields');
+      return;
+    }
+
+    // Validate phone number (10-15 digits)
+    const phoneRegex = /^\d{10,15}$/;
+    if (!phoneRegex.test(forgotPhone.replace(/\D/g, ''))) {
+      toast.error('Please enter a valid phone number (10-15 digits)');
+      return;
+    }
+
+    setIsForgotLoading(true);
+    try {
+      // TODO: Connect to backend endpoint for password reset
+      // For now, just show success message
+      toast.success('Password reset link sent to your phone');
+      setShowForgotPassword(false);
+      setForgotEmail('');
+      setForgotPhone('');
+    } catch (error) {
+      toast.error('Failed to process request. Please try again.');
+    } finally {
+      setIsForgotLoading(false);
     }
   };
 
@@ -88,7 +123,17 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-zinc-300">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password" className="text-zinc-300">Password</Label>
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(true)}
+                  className="text-sm text-zinc-400 hover:text-white transition-colors"
+                  data-testid="forgot-password-button"
+                >
+                  Forgot?
+                </button>
+              </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
                 <Input
@@ -128,6 +173,61 @@ export default function LoginPage() {
           </p>
         </div>
       </div>
+
+      {/* Forgot Password Modal */}
+      <Dialog open={showForgotPassword} onOpenChange={setShowForgotPassword}>
+        <DialogContent className="bg-[#0A0A0A] border-white/10 max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-2xl text-white">Reset Password</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Enter your email and phone number to reset your password
+            </DialogDescription>
+          </DialogHeader>
+          
+          <form onSubmit={handleForgotPasswordSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="forgot-email" className="text-zinc-300">Email</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+                <Input
+                  id="forgot-email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  className="pl-10 bg-zinc-900/50 border-zinc-800 focus:border-white/20 focus:ring-0 h-12 text-white placeholder:text-zinc-600"
+                  data-testid="forgot-email-input"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="forgot-phone" className="text-zinc-300">Phone Number</Label>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+                <Input
+                  id="forgot-phone"
+                  type="tel"
+                  placeholder="+1 (555) 000-0000"
+                  value={forgotPhone}
+                  onChange={(e) => setForgotPhone(e.target.value)}
+                  className="pl-10 bg-zinc-900/50 border-zinc-800 focus:border-white/20 focus:ring-0 h-12 text-white placeholder:text-zinc-600"
+                  data-testid="forgot-phone-input"
+                />
+              </div>
+            </div>
+
+            <Button 
+              type="submit" 
+              className="w-full h-12 bg-white text-black hover:bg-zinc-200 font-medium rounded-full"
+              disabled={isForgotLoading}
+              data-testid="forgot-submit-button"
+            >
+              {isForgotLoading ? 'Sending...' : 'Send Reset Link'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

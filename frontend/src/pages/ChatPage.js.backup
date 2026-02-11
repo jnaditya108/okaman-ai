@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
@@ -36,7 +36,6 @@ import {
   Info,
   Mail,
   Loader2,
-  ChevronDown,
 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
@@ -49,15 +48,9 @@ const AI_MODELS = [
 
 export default function ChatPage() {
   const navigate = useNavigate();
-  const { chatId } = useParams();
   const { user, logout, updateCredits, getToken } = useAuth();
   
-  // Chat state
-  const [chatSessions, setChatSessions] = useState([]);
-  const [currentChat, setCurrentChat] = useState(null);
-  const [messages, setMessages] = useState([]);
-  
-  // UI state
+  const [chats, setChats] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [selectedModel, setSelectedModel] = useState('VEO 3');
   const [isLoading, setIsLoading] = useState(false);
@@ -68,7 +61,6 @@ export default function ChatPage() {
   const [showContact, setShowContact] = useState(false);
   const [pricingPlans, setPricingPlans] = useState([]);
   const [feedbackGiven, setFeedbackGiven] = useState({});
-  const [showUserMenu, setShowUserMenu] = useState(false);
   
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -80,43 +72,20 @@ export default function ChatPage() {
   // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+  }, [chats]);
 
-  // Fetch chat sessions on mount
+  // Fetch chats on mount
   useEffect(() => {
-    fetchChatSessions();
+    fetchChats();
     fetchPricingPlans();
   }, []);
 
-  // Load specific chat when chatId changes
-  useEffect(() => {
-    if (chatId) {
-      fetchChat(chatId);
-    } else {
-      setCurrentChat(null);
-      setMessages([]);
-    }
-  }, [chatId]);
-
-  const fetchChatSessions = async () => {
+  const fetchChats = async () => {
     try {
       const response = await axios.get(`${API_URL}/api/chats`, authHeaders);
-      setChatSessions(response.data);
+      setChats(response.data);
     } catch (error) {
       console.error('Error fetching chats:', error);
-      toast.error('Failed to load chats');
-    }
-  };
-
-  const fetchChat = async (id) => {
-    try {
-      const response = await axios.get(`${API_URL}/api/chats/${id}`, authHeaders);
-      setCurrentChat(response.data);
-      setMessages(response.data.messages);
-      setSelectedModel(response.data.model);
-    } catch (error) {
-      console.error('Error fetching chat:', error);
-      toast.error('Failed to load chat');
     }
   };
 
@@ -133,12 +102,7 @@ export default function ChatPage() {
     e.stopPropagation();
     try {
       await axios.delete(`${API_URL}/api/chats/${id}`, authHeaders);
-      setChatSessions(chatSessions.filter(c => c.id !== id));
-      if (currentChat?.id === id) {
-        navigate('/chat');
-        setCurrentChat(null);
-        setMessages([]);
-      }
+      setChats(chats.filter(c => c.id !== id));
       toast.success('Chat deleted');
     } catch (error) {
       toast.error('Failed to delete chat');
@@ -156,51 +120,24 @@ export default function ChatPage() {
 
     const userMessage = inputValue;
     setInputValue('');
-    
-    // Add user message to UI immediately
-    const tempUserMessage = {
-      id: 'temp-' + Date.now(),
-      chat_id: currentChat?.id,
-      role: 'user',
-      content: userMessage,
-      created_at: new Date().toISOString()
-    };
-    setMessages(prev => [...prev, tempUserMessage]);
     setIsLoading(true);
 
     try {
       const response = await axios.post(
         `${API_URL}/api/chat/send`,
         {
-          chat_id: currentChat?.id,
           content: userMessage,
           model: selectedModel
         },
         authHeaders
       );
 
-      // Remove temp message and add real AI response
-      setMessages(prev => {
-        const filtered = prev.filter(m => m.id !== tempUserMessage.id);
-        return [...filtered, response.data.message];
-      });
-      
+      // Add new chat to list
+      setChats(prev => [response.data.chat, ...prev]);
+
       // Update credits
       updateCredits(response.data.remaining_credits);
-      
-      // Update current chat or navigate to new chat
-      if (currentChat) {
-        fetchChat(currentChat.id);
-      } else {
-        // New chat created, navigate to it
-        const newChatId = response.data.message.chat_id;
-        navigate(`/chat/${newChatId}`);
-        fetchChatSessions();
-      }
     } catch (error) {
-      // Remove temp user message on error
-      setMessages(prev => prev.filter(m => m.id !== tempUserMessage.id));
-      
       if (error.response?.status === 402) {
         setShowRefillModal(true);
       } else {
@@ -215,7 +152,7 @@ export default function ChatPage() {
     try {
       await axios.post(
         `${API_URL}/api/chat/stop`,
-        { chat_id: currentChat?.id || 'current' },
+        { chat_id: 'current' },
         authHeaders
       );
       setIsLoading(false);
@@ -225,14 +162,14 @@ export default function ChatPage() {
     }
   };
 
-  const submitFeedback = async (messageId, isPositive) => {
+  const submitFeedback = async (chatId, isPositive) => {
     try {
       await axios.post(
         `${API_URL}/api/feedback`,
-        { message_id: messageId, is_positive: isPositive },
+        { chat_id: chatId, is_positive: isPositive },
         authHeaders
       );
-      setFeedbackGiven(prev => ({ ...prev, [messageId]: isPositive }));
+      setFeedbackGiven(prev => ({ ...prev, [chatId]: isPositive }));
       toast.success(isPositive ? 'Thanks for the feedback!' : 'Thanks, we\'ll improve!');
     } catch (error) {
       toast.error('Failed to submit feedback');
@@ -286,40 +223,25 @@ export default function ChatPage() {
             </button>
           </div>
 
-          {/* New Chat Button */}
-          <button
-            onClick={() => navigate('/chat')}
-            className="m-4 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            <span className="text-sm font-medium">New Chat</span>
-          </button>
-
           {/* Chat History Label */}
           <div className="px-4 py-3 border-b border-white/5">
             <span className="text-xs text-zinc-500 uppercase tracking-wider">Chat History</span>
           </div>
 
-          {/* Chat Sessions List */}
+          {/* Chat History */}
           <ScrollArea className="flex-1 px-2 py-2">
             <div className="space-y-1">
-              {chatSessions.length === 0 ? (
+              {chats.length === 0 ? (
                 <p className="text-zinc-500 text-sm text-center py-4">No chats yet</p>
               ) : (
-                chatSessions.map((chat) => (
-                  <button
+                chats.map((chat) => (
+                  <div
                     key={chat.id}
-                    onClick={() => navigate(`/chat/${chat.id}`)}
-                    className={`
-                      w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left group transition-colors
-                      ${currentChat?.id === chat.id 
-                        ? 'bg-white/10 text-white' 
-                        : 'text-zinc-400 hover:bg-white/5 hover:text-white'}
-                    `}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left group transition-colors text-zinc-400 hover:bg-white/5 hover:text-white"
                     data-testid={`chat-item-${chat.id}`}
                   >
                     <MessageSquare className="w-4 h-4 shrink-0" />
-                    <span className="flex-1 truncate text-sm">{chat.title}</span>
+                    <span className="flex-1 truncate text-sm">{chat.user_prompt?.slice(0, 30) || 'Chat'}...</span>
                     <button
                       onClick={(e) => deleteChat(chat.id, e)}
                       className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400"
@@ -327,7 +249,7 @@ export default function ChatPage() {
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
-                  </button>
+                  </div>
                 ))
               )}
             </div>
@@ -387,11 +309,6 @@ export default function ChatPage() {
               <Sparkles className="w-5 h-5 text-white" />
               <span className="font-heading font-semibold text-white">Okaman</span>
             </div>
-            {currentChat && (
-              <div className="text-sm text-zinc-400">
-                {currentChat.title}
-              </div>
-            )}
           </div>
 
           <div className="flex items-center gap-4">
@@ -403,6 +320,15 @@ export default function ChatPage() {
               <Mail className="w-4 h-4" />
               Contact Us
             </button>
+            <Button
+              onClick={() => navigate('/')}
+              variant="ghost"
+              className="hidden sm:flex text-zinc-400 hover:text-white"
+              data-testid="header-new-chat"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              New Chat
+            </Button>
             
             {/* Credit Display */}
             <div 
@@ -415,70 +341,23 @@ export default function ChatPage() {
                 {user?.current_credits || 0}
               </span>
             </div>
-
-            {/* User Profile Avatar */}
-            <div className="relative">
-              <button
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="relative w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center hover:shadow-lg transition-all cursor-pointer"
-                data-testid="user-avatar"
-                title={user?.email}
-              >
-                <span className="text-sm font-bold text-white">
-                  {user?.email?.[0]?.toUpperCase() || 'U'}
-                </span>
-              </button>
-
-              {/* User Menu Dropdown */}
-              {showUserMenu && (
-                <div className="absolute right-0 mt-2 w-48 rounded-lg bg-[#121212] border border-white/10 shadow-lg z-50">
-                  {/* User Info */}
-                  <div className="px-4 py-3 border-b border-white/10">
-                    <p className="text-xs text-zinc-500 uppercase tracking-wider">Account</p>
-                    <p className="text-sm text-white font-medium mt-1 break-all">{user?.email}</p>
-                  </div>
-
-                  {/* Menu Items */}
-                  <div className="py-2">
-                    <button
-                      onClick={() => {
-                        setShowPricing(true);
-                        setShowUserMenu(false);
-                      }}
-                      className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-white/5 transition-colors flex items-center gap-2"
-                    >
-                      <Coins className="w-4 h-4" />
-                      Credits: {user?.current_credits || 0}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </header>
-
-        {/* Close user menu when clicking outside */}
-        {showUserMenu && (
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => setShowUserMenu(false)}
-          />
-        )}
 
         {/* Chat Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
           {/* Welcome Screen / Chat Input Area */}
-          <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 flex flex-col">
             {/* Messages Area */}
-            <ScrollArea className="flex-1 overflow-y-auto">
-              <div className="max-w-3xl mx-auto px-4 py-6 w-full pb-32">
-                {messages.length === 0 ? (
+            <ScrollArea className="flex-1">
+              <div className="max-w-3xl mx-auto px-4 py-6">
+                {chats.length === 0 ? (
                   // Welcome Screen
                   <div className="flex items-center justify-center min-h-[60vh]">
                     <div className="text-center max-w-2xl animate-fade-in">
                       <Sparkles className="w-16 h-16 text-white mx-auto mb-6" />
                       <h1 className="font-heading text-3xl md:text-4xl font-bold text-white mb-4">
-                        {currentChat ? currentChat.title : 'Welcome to Okaman'}
+                        Welcome to Okaman
                       </h1>
                       <p className="text-zinc-400 text-lg mb-8">
                         AI prompt generation for Sora, Veo3, and other AI video generation tools.
@@ -504,59 +383,58 @@ export default function ChatPage() {
                 ) : (
                   // Chat Messages
                   <div className="space-y-6">
-                    {messages.map((msg, index) => (
-                      <div 
-                        key={msg.id} 
-                        className="space-y-4 animate-fade-in" 
-                        style={{ animationDelay: `${index * 50}ms` }}
-                      >
-                        {msg.role === 'user' ? (
-                          // User Message
-                          <div className="ml-auto max-w-[85%]">
-                            <div className="message-user rounded-2xl px-4 py-3">
-                              <p className="text-zinc-100 whitespace-pre-wrap">
-                                {msg.content}
-                              </p>
-                            </div>
+                    {[...chats].reverse().map((chat, index) => (
+                      <div key={chat.id} className="space-y-4 animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
+                        {/* User Message */}
+                        <div className="ml-auto max-w-[85%]">
+                          <div className="message-user rounded-2xl px-4 py-3">
+                            <p className="text-zinc-100 whitespace-pre-wrap">
+                              {chat.user_prompt}
+                            </p>
                           </div>
-                        ) : (
-                          // AI Response
-                          <div className="mr-auto max-w-[85%]">
-                            <div className="message-assistant rounded-2xl px-4 py-3">
-                              <p className="text-zinc-100 whitespace-pre-wrap">
-                                {msg.content}
-                              </p>
-                            </div>
-                            
-                            {/* Feedback buttons */}
-                            <div className="flex items-center gap-2 mt-2 ml-2">
-                              <button
-                                onClick={() => submitFeedback(msg.id, true)}
-                                className={`
-                                  p-1.5 rounded-lg transition-colors
-                                  ${feedbackGiven[msg.id] === true 
-                                    ? 'text-green-400 bg-green-400/10' 
-                                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
-                                `}
-                                data-testid={`feedback-up-${msg.id}`}
-                              >
-                                <ThumbsUp className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => submitFeedback(msg.id, false)}
-                                className={`
-                                  p-1.5 rounded-lg transition-colors
-                                  ${feedbackGiven[msg.id] === false 
-                                    ? 'text-red-400 bg-red-400/10' 
-                                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
-                                `}
-                                data-testid={`feedback-down-${msg.id}`}
-                              >
-                                <ThumbsDown className="w-4 h-4" />
-                              </button>
-                            </div>
+                        </div>
+                        
+                        {/* AI Response */}
+                        <div className="mr-auto max-w-[85%]">
+                          <div className="message-assistant rounded-2xl px-4 py-3">
+                            {chat.model_used && (
+                              <div className="text-xs text-zinc-500 mb-2 font-mono">
+                                {chat.model_used}
+                              </div>
+                            )}
+                            <p className="text-zinc-100 whitespace-pre-wrap">
+                              {chat.ai_response}
+                            </p>
                           </div>
-                        )}
+                          
+                          {/* Feedback buttons */}
+                          <div className="flex items-center gap-2 mt-2 ml-2">
+                            <button
+                              onClick={() => submitFeedback(chat.id, true)}
+                              className={`
+                                p-1.5 rounded-lg transition-colors
+                                ${feedbackGiven[chat.id] === true 
+                                  ? 'text-green-400 bg-green-400/10' 
+                                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
+                              `}
+                              data-testid={`feedback-up-${chat.id}`}
+                            >
+                              <ThumbsUp className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => submitFeedback(chat.id, false)}
+                              className={`
+                                p-1.5 rounded-lg transition-colors
+                                ${feedbackGiven[chat.id] === false 
+                                  ? 'text-red-400 bg-red-400/10' 
+                                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'}
+                              `}
+                              data-testid={`feedback-down-${chat.id}`}
+                            >
+                              <ThumbsDown className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     ))}
                     
@@ -583,7 +461,7 @@ export default function ChatPage() {
             </ScrollArea>
 
             {/* Input Area */}
-            <div className="border-t border-white/10 bg-[#0A0A0A] p-4">
+            <div className="p-4">
               <div className="max-w-3xl mx-auto">
                 <div className="chat-input rounded-2xl p-3">
                   <div className="flex items-center gap-3 mb-3">
@@ -771,7 +649,7 @@ export default function ChatPage() {
               We help creators craft perfect prompts for AI video generation tools like Sora, Veo3, and Kling.
             </p>
             <p className="text-zinc-500 italic">
-              "Our mission is to empower creators with the best AI tools to bring their video ideas to life."
+              [Your bio and company information goes here]
             </p>
           </div>
         </DialogContent>
