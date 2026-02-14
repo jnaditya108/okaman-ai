@@ -13,6 +13,8 @@ import asyncpg
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 import httpx
+from google.auth.transport import requests
+from google.oauth2 import id_token
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -28,6 +30,12 @@ DATABASE_URL = os.environ.get('DATABASE_URL', '')
 JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'your-super-secret-key-change-in-production')
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
+
+# ============================================================
+# GOOGLE OAUTH CONFIGURATION
+# ============================================================
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 
 # ============================================================
 # N8N WEBHOOK CONFIGURATION
@@ -105,6 +113,10 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
+class GoogleOAuthToken(BaseModel):
+    id_token: str
+    """Google OAuth ID token from frontend"""
 
 class UserResponse(BaseModel):
     user_id: str
@@ -189,6 +201,33 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
+
+def verify_google_token(token: str) -> dict:
+    """
+    Verify Google OAuth ID token and return claims.
+    
+    Args:
+        token: Google OAuth ID token from frontend
+        
+    Returns:
+        Dictionary containing token claims (email, email_verified, name, picture, etc.)
+        
+    Raises:
+        ValueError: If token is invalid
+    """
+    try:
+        # Verify the token with Google's public certificates
+        request_obj = requests.Request()
+        claim = id_token.verify_oauth2_token(token, request_obj, GOOGLE_CLIENT_ID)
+        
+        # Verify the token is from Google
+        if claim['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
+            raise ValueError('Invalid issuer')
+            
+        return claim
+    except Exception as e:
+        logger.error(f"Google token verification failed: {e}")
+        raise ValueError(f"Invalid Google token: {str(e)}")
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
@@ -284,6 +323,77 @@ async def login(user_data: UserLogin):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
     user_dict = dict(user)
+    access_token = create_access_token(data={"sub": str(user_dict["user_id"])})
+    
+    return TokenResponse(
+        access_token=access_token,
+        user=UserResponse(
+            user_id=str(user_dict["user_id"]),
+            email=user_dict["email"],
+            current_credits=user_dict["current_credits"],
+            created_at=user_dict["created_at"]
+        )
+    )
+
+@api_router.post("/auth/google", response_model=TokenResponse)
+async def google_oauth(oauth_data: GoogleOAuthToken):
+    """
+    Authenticate user with Google OAuth token.
+    
+    If user doesn't exist, create a new account with 50 free credits.
+    If user exists, log them in.
+    
+    Args:
+        oauth_data: Contains the Google OAuth ID token from frontend
+        
+    Returns:
+        TokenResponse with JWT token and user info
+    """
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(
+            status_code=500, 
+            detail="Google OAuth not configured on server"
+        )
+    
+    try:
+        # Verify the Google token
+        google_claims = verify_google_token(oauth_data.id_token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    
+    # Extract user info from token
+    email = google_claims.get('email')
+    name = google_claims.get('name', '')
+    picture = google_claims.get('picture', '')
+    email_verified = google_claims.get('email_verified', False)
+    
+    if not email:
+        raise HTTPException(status_code=400, detail="Email not found in Google token")
+    
+    async with db_pool.acquire() as conn:
+        # Check if user exists
+        user = await conn.fetchrow(
+            'SELECT user_id, email, current_credits, created_at FROM users WHERE email = $1',
+            email
+        )
+        
+        if user:
+            # User exists, log them in
+            user_dict = dict(user)
+        else:
+            # User doesn't exist, create new account with 50 free credits
+            user = await conn.fetchrow(
+                '''INSERT INTO users (email, current_credits)
+                   VALUES ($1, 50) RETURNING user_id, email, current_credits, created_at''',
+                email
+            )
+            user_dict = dict(user)
+            logger.info(f"New user created via Google OAuth: {email}")
+    
+    # Create JWT token
     access_token = create_access_token(data={"sub": str(user_dict["user_id"])})
     
     return TokenResponse(
