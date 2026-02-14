@@ -12,7 +12,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000'
 export default function EmailVerificationModal({ open, onOpenChange, email, onSuccess, isSignup = false }) {
   const [otp, setOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [testOtp, setTestOtp] = useState('');
 
   const handleVerifyOTP = async (e) => {
     e.preventDefault();
@@ -39,7 +38,6 @@ export default function EmailVerificationModal({ open, onOpenChange, email, onSu
       
       // Reset and close modal
       setOtp('');
-      setTestOtp('');
       onOpenChange(false);
     } catch (error) {
       const message = error.response?.data?.detail || 'Invalid OTP. Please try again.';
@@ -51,7 +49,6 @@ export default function EmailVerificationModal({ open, onOpenChange, email, onSu
 
   const handleClose = () => {
     setOtp('');
-    setTestOtp('');
     onOpenChange(false);
   };
 
@@ -79,11 +76,6 @@ export default function EmailVerificationModal({ open, onOpenChange, email, onSu
               className="tracking-widest text-center text-lg"
             />
             <p className="text-xs text-gray-500">Check your email for the 6-digit code</p>
-            {testOtp && (
-              <div className="p-2 bg-blue-900/20 border border-blue-500/30 rounded text-xs text-blue-300">
-                📌 Development: Test OTP is <span className="font-mono font-bold">{testOtp}</span>
-              </div>
-            )}
           </div>
           
           <Button 
