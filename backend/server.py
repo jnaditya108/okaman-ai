@@ -55,6 +55,19 @@ api_router = APIRouter(prefix="/api")
 # Database connection pool
 db_pool: Optional[asyncpg.Pool] = None
 
+# ============================================================
+# OTP STORAGE (In-memory cache for temporary OTP storage)
+# In production, use Redis or database
+# ============================================================
+otp_store = {}  # Format: {email: {"otp": "123456", "expires_at": datetime}}
+
+import random
+import string
+
+def generate_otp(length: int = 6) -> str:
+    """Generate a random 6-digit OTP"""
+    return ''.join(random.choices(string.digits, k=length))
+
 # Configure CORS middleware FIRST (before router)
 cors_origins = os.environ.get('CORS_ORIGINS', '*').split(',')
 cors_origins = [origin.strip() for origin in cors_origins]  # Remove whitespace
@@ -117,6 +130,31 @@ class UserLogin(BaseModel):
 class GoogleOAuthToken(BaseModel):
     id_token: str
     """Google OAuth ID token from frontend"""
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+    """User email to send OTP to"""
+
+class VerifyOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    """OTP sent to user's email"""
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str
+    confirm_password: str
+    """Password reset with OTP verification"""
+
+class N8NPasswordChangeWebhook(BaseModel):
+    email: EmailStr
+    otp: str
+    """Webhook from N8N containing OTP"""
+
+class OTPVerifyResponse(BaseModel):
+    success: bool
+    message: str
 
 class UserResponse(BaseModel):
     user_id: str
@@ -274,26 +312,143 @@ PRICING_PLANS = [
 # ============================================================
 # AUTH ENDPOINTS
 # ============================================================
-@api_router.post("/auth/register", response_model=TokenResponse)
+@api_router.post("/auth/register")
 async def register(user_data: UserRegister):
-    """Register a new user"""
+    """
+    Request email verification during signup.
+    Sends OTP to user's email via N8N.
+    
+    Args:
+        user_data: Email and password
+        
+    Returns:
+        Message confirming OTP was sent (includes test_otp in development)
+    """
     if not db_pool:
         raise HTTPException(status_code=503, detail="Database not available")
     
+    # Check if user already exists
     async with db_pool.acquire() as conn:
-        # Check if user exists
         existing = await conn.fetchrow('SELECT user_id FROM users WHERE email = $1', user_data.email)
+    
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Validate password length
+    if len(user_data.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    
+    # Generate OTP for email verification
+    otp = generate_otp()
+    
+    # Store OTP and password temporarily (expires in 10 minutes)
+    expiration_time = datetime.now(timezone.utc) + timedelta(minutes=10)
+    otp_store[user_data.email] = {
+        "otp": otp,
+        "password": user_data.password,  # Store password temporarily for account creation
+        "expires_at": expiration_time,
+        "attempts": 0,
+        "type": "signup"  # Mark this as signup OTP
+    }
+    
+    logger.info(f"Signup OTP generated for {user_data.email}: {otp} (expires at {expiration_time})")
+    
+    # Send OTP via N8N webhook
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                "https://finance-manager-adi108.duckdns.org/webhook/pass-change",
+                json={
+                    "email": user_data.email,
+                    "otp": otp,
+                    "user_name": user_data.email,
+                    "type": "signup"
+                },
+                timeout=10.0
+            )
+    except Exception as e:
+        logger.error(f"Failed to send signup OTP via N8N: {e}")
+    
+    # In development, return the OTP for testing purposes
+    is_development = os.environ.get('ENVIRONMENT', 'development').lower() == 'development'
+    response = {"message": "OTP sent to your email. Please verify to complete signup."}
+    if is_development:
+        response["test_otp"] = otp  # Only for development/testing
+        logger.info(f"DEVELOPMENT MODE: OTP returned in response for testing")
+    
+    return response
+
+@api_router.post("/auth/verify-signup", response_model=TokenResponse)
+async def verify_signup(request: VerifyOTPRequest):
+    """
+    Verify email OTP and create user account.
+    
+    Args:
+        request: Contains email and OTP
+        
+    Returns:
+        JWT token and user info
+    """
+    logger.info(f"Signup verification attempt for {request.email} with OTP: {request.otp}")
+    
+    if request.email not in otp_store:
+        logger.warning(f"No OTP found in store for {request.email}")
+        raise HTTPException(status_code=400, detail="No verification request found. Please sign up again.")
+    
+    otp_data = otp_store[request.email]
+    
+    # Check if this is a signup OTP
+    if otp_data.get("type") != "signup":
+        logger.warning(f"OTP type mismatch for {request.email}")
+        raise HTTPException(status_code=400, detail="Invalid verification request. Please sign up again.")
+    
+    logger.info(f"OTP data found: stored_otp={otp_data['otp']}, received_otp={request.otp}, expires_at={otp_data['expires_at']}, attempts={otp_data['attempts']}")
+    
+    # Check if OTP has expired
+    now = datetime.now(timezone.utc)
+    if now > otp_data["expires_at"]:
+        logger.warning(f"OTP expired for {request.email}. Now: {now}, Expires at: {otp_data['expires_at']}")
+        del otp_store[request.email]
+        raise HTTPException(status_code=400, detail="OTP has expired. Please sign up again.")
+    
+    # Check attempt limit (3 attempts max)
+    if otp_data["attempts"] >= 3:
+        logger.warning(f"Too many failed attempts for {request.email}")
+        del otp_store[request.email]
+        raise HTTPException(status_code=400, detail="Too many failed attempts. Please sign up again.")
+    
+    # Verify OTP (case-sensitive, exact match)
+    if str(otp_data["otp"]) != str(request.otp).strip():
+        otp_data["attempts"] += 1
+        remaining = 3 - otp_data["attempts"]
+        logger.warning(f"Invalid OTP for {request.email}. Attempt {otp_data['attempts']}/3. Expected: {otp_data['otp']}, Got: {request.otp}")
+        raise HTTPException(status_code=400, detail=f"Invalid OTP. {remaining} attempts remaining.")
+    
+    # OTP verified successfully, create user account
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    # Check one more time if user doesn't exist (race condition check)
+    async with db_pool.acquire() as conn:
+        existing = await conn.fetchrow('SELECT user_id FROM users WHERE email = $1', request.email)
         if existing:
+            del otp_store[request.email]
             raise HTTPException(status_code=400, detail="Email already registered")
         
         # Create user with 50 free credits
-        password_hash = get_password_hash(user_data.password)
+        password_hash = get_password_hash(otp_data["password"])
         user = await conn.fetchrow(
             '''INSERT INTO users (email, password_hash, current_credits)
                VALUES ($1, $2, 50) RETURNING user_id, email, current_credits, created_at''',
-            user_data.email, password_hash
+            request.email, password_hash
         )
     
+    # Clear OTP from store
+    del otp_store[request.email]
+    
+    logger.info(f"User account created after email verification for {request.email}")
+    
+    # Generate JWT token for automatic login
     user_dict = dict(user)
     access_token = create_access_token(data={"sub": str(user_dict["user_id"])})
     
@@ -319,7 +474,18 @@ async def login(user_data: UserLogin):
             user_data.email
         )
     
-    if not user or not verify_password(user_data.password, user["password_hash"]):
+    # ❌ CRITICAL SECURITY CHECK: Ensure user exists and has a password
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    if user["password_hash"] is None:
+        raise HTTPException(
+            status_code=401, 
+            detail="This account uses Google Login. Please sign in with Google."
+        )
+    
+    # Proceed with normal password verification
+    if not verify_password(user_data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
     user_dict = dict(user)
@@ -415,6 +581,196 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         current_credits=current_user["current_credits"],
         created_at=current_user["created_at"]
     )
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    """
+    Request password reset. Sends OTP to user's email via N8N.
+    
+    Args:
+        request: Contains user email
+        
+    Returns:
+        Message confirming OTP was sent (includes test_otp in development)
+    """
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    # Check if user exists
+    async with db_pool.acquire() as conn:
+        user = await conn.fetchrow(
+            'SELECT user_id, email FROM users WHERE email = $1',
+            request.email
+        )
+    
+    if not user:
+        # Don't reveal if email exists (security best practice)
+        return {"message": "If account exists, OTP will be sent to email"}
+    
+    # Generate OTP
+    otp = generate_otp()
+    
+    # Store OTP temporarily (expires in 10 minutes)
+    expiration_time = datetime.now(timezone.utc) + timedelta(minutes=10)
+    otp_store[request.email] = {
+        "otp": otp,
+        "expires_at": expiration_time,
+        "attempts": 0
+    }
+    
+    logger.info(f"OTP generated for {request.email}: {otp} (expires at {expiration_time})")
+    
+    # Send OTP via N8N webhook
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                "https://finance-manager-adi108.duckdns.org/webhook/pass-change",
+                json={
+                    "email": request.email,
+                    "otp": otp,
+                    "user_name": user.get("email", "User")
+                },
+                timeout=10.0
+            )
+    except Exception as e:
+        logger.error(f"Failed to send OTP via N8N: {e}")
+    
+    # In development, return the OTP for testing purposes
+    # In production, remove this for security
+    is_development = os.environ.get('ENVIRONMENT', 'development').lower() == 'development'
+    response = {"message": "If account exists, OTP will be sent to email"}
+    if is_development:
+        response["test_otp"] = otp  # Only for development/testing
+        logger.info(f"DEVELOPMENT MODE: OTP returned in response for testing")
+    
+    return response
+
+@api_router.post("/auth/verify-otp", response_model=OTPVerifyResponse)
+async def verify_otp(request: VerifyOTPRequest):
+    """
+    Verify the OTP sent to user's email.
+    
+    Args:
+        request: Contains email and OTP
+        
+    Returns:
+        Success status
+    """
+    logger.info(f"OTP verification attempt for {request.email} with OTP: {request.otp}")
+    
+    if request.email not in otp_store:
+        logger.warning(f"No OTP found in store for {request.email}")
+        logger.info(f"Current OTP store keys: {list(otp_store.keys())}")
+        raise HTTPException(status_code=400, detail="No OTP request found for this email. Request a new OTP.")
+    
+    otp_data = otp_store[request.email]
+    logger.info(f"OTP data found: stored_otp={otp_data['otp']}, received_otp={request.otp}, expires_at={otp_data['expires_at']}, attempts={otp_data['attempts']}")
+    
+    # Check if OTP has expired
+    now = datetime.now(timezone.utc)
+    if now > otp_data["expires_at"]:
+        logger.warning(f"OTP expired for {request.email}. Now: {now}, Expires at: {otp_data['expires_at']}")
+        del otp_store[request.email]
+        raise HTTPException(status_code=400, detail="OTP has expired. Request a new one.")
+    
+    # Check attempt limit (3 attempts max)
+    if otp_data["attempts"] >= 3:
+        logger.warning(f"Too many failed attempts for {request.email}")
+        del otp_store[request.email]
+        raise HTTPException(status_code=400, detail="Too many failed attempts. Request a new OTP.")
+    
+    # Verify OTP (case-sensitive, exact match)
+    if str(otp_data["otp"]) != str(request.otp).strip():
+        otp_data["attempts"] += 1
+        remaining = 3 - otp_data["attempts"]
+        logger.warning(f"Invalid OTP for {request.email}. Attempt {otp_data['attempts']}/3. Expected: {otp_data['otp']}, Got: {request.otp}")
+        raise HTTPException(status_code=400, detail=f"Invalid OTP. {remaining} attempts remaining.")
+    
+    # OTP verified successfully
+    logger.info(f"OTP verified successfully for {request.email}")
+    return OTPVerifyResponse(success=True, message="OTP verified successfully")
+
+@api_router.post("/auth/reset-password", response_model=TokenResponse)
+async def reset_password(request: ResetPasswordRequest):
+    """
+    Reset user password after OTP verification.
+    
+    Args:
+        request: Contains email, OTP, and new password
+        
+    Returns:
+        JWT token for automatic login
+    """
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    # Verify passwords match
+    if request.new_password != request.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+    
+    # Verify password length
+    if len(request.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    
+    # Verify OTP
+    if request.email not in otp_store:
+        raise HTTPException(status_code=400, detail="Invalid OTP request")
+    
+    otp_data = otp_store[request.email]
+    
+    if otp_data["otp"] != request.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    
+    if datetime.now(timezone.utc) > otp_data["expires_at"]:
+        del otp_store[request.email]
+        raise HTTPException(status_code=400, detail="OTP has expired")
+    
+    # Update password in database
+    password_hash = get_password_hash(request.new_password)
+    
+    async with db_pool.acquire() as conn:
+        user = await conn.fetchrow(
+            'UPDATE users SET password_hash = $1 WHERE email = $2 RETURNING user_id, email, current_credits, created_at',
+            password_hash,
+            request.email
+        )
+    
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+    
+    # Clear OTP from store
+    del otp_store[request.email]
+    
+    logger.info(f"Password reset for {request.email}")
+    
+    # Generate JWT token
+    user_dict = dict(user)
+    access_token = create_access_token(data={"sub": str(user_dict["user_id"])})
+    
+    return TokenResponse(
+        access_token=access_token,
+        user=UserResponse(
+            user_id=str(user_dict["user_id"]),
+            email=user_dict["email"],
+            current_credits=user_dict["current_credits"],
+            created_at=user_dict["created_at"]
+        )
+    )
+
+@app.post("/webhook/password-change")
+async def password_change_webhook(webhook_data: N8NPasswordChangeWebhook):
+    """
+    Webhook endpoint for N8N to send OTP.
+    This is called by N8N after sending the email.
+    
+    Args:
+        webhook_data: Contains email and OTP from N8N
+        
+    Returns:
+        Confirmation
+    """
+    logger.info(f"Received password change webhook for {webhook_data.email}")
+    return {"status": "received", "email": webhook_data.email}
 
 # ============================================================
 # CHAT ENDPOINTS (Adapted to your Supabase schema)
