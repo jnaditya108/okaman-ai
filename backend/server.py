@@ -167,6 +167,13 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user: UserResponse
 
+class PromoApplyRequest(BaseModel):
+    code: str
+
+class PromoApplyResponse(BaseModel):
+    message: str
+    new_credits: int
+
 # Chat Models
 class MessageResponse(BaseModel):
     id: str
@@ -581,6 +588,62 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         current_credits=current_user["current_credits"],
         created_at=current_user["created_at"]
     )
+
+
+@api_router.post("/promos/apply", response_model=PromoApplyResponse)
+async def apply_promo(request: PromoApplyRequest, current_user: dict = Depends(get_current_user)):
+    """
+    Apply a promo code to the current user's account.
+
+    Expects a `promo_codes` table with columns: code (pk), credits (int), max_uses (int, nullable), uses (int), expires_at (timestamptz, nullable).
+    """
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    code = request.code.strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Promo code is required")
+
+    async with db_pool.acquire() as conn:
+        promo = await conn.fetchrow(
+            'SELECT code, credits, max_uses, uses, expires_at FROM promo_codes WHERE code = $1',
+            code
+        )
+
+        if not promo:
+            raise HTTPException(status_code=404, detail="Promo code not found")
+
+        now = datetime.now(timezone.utc)
+        if promo.get('expires_at') and now > promo['expires_at']:
+            raise HTTPException(status_code=400, detail="Promo code has expired")
+
+        if promo.get('max_uses') is not None and promo.get('uses', 0) >= promo['max_uses']:
+            raise HTTPException(status_code=400, detail="Promo code has already been fully redeemed")
+
+        try:
+            async with conn.transaction():
+                updated = await conn.fetchrow(
+                    'UPDATE users SET current_credits = current_credits + $1 WHERE user_id = $2 RETURNING current_credits',
+                    promo['credits'],
+                    current_user['user_id']
+                )
+
+                if not updated:
+                    raise HTTPException(status_code=400, detail="User not found")
+
+                await conn.execute(
+                    'UPDATE promo_codes SET uses = COALESCE(uses, 0) + 1 WHERE code = $1',
+                    code
+                )
+
+            new_credits = updated['current_credits']
+            logger.info(f"Promo {code} applied to user {current_user.get('email')}: +{promo['credits']} credits")
+            return PromoApplyResponse(message="Promo applied successfully", new_credits=new_credits)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to apply promo {code}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to apply promo code")
 
 @api_router.post("/auth/forgot-password")
 async def forgot_password(request: ForgotPasswordRequest):
@@ -1007,6 +1070,20 @@ async def submit_feedback(feedback_data: FeedbackCreate, current_user: dict = De
         raise HTTPException(status_code=503, detail="Database not available")
     
     async with db_pool.acquire() as conn:
+        # Validate that the referenced message exists. Support both new `messages` table
+        # and legacy `chats_backup` (if migration hasn't run). If not found, return 404.
+        try:
+            msg_uuid = uuid.UUID(feedback_data.message_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid message id")
+
+        message_exists = await conn.fetchval('SELECT 1 FROM messages WHERE id = $1', msg_uuid)
+        if not message_exists:
+            # Try legacy chats_backup table (older schema)
+            legacy_exists = await conn.fetchval('SELECT 1 FROM chats_backup WHERE id = $1', msg_uuid)
+            if not legacy_exists:
+                raise HTTPException(status_code=404, detail="Message not found")
+
         # Check if feedback already exists
         existing = await conn.fetchrow(
             'SELECT id FROM feedback WHERE message_id = $1',
@@ -1019,16 +1096,21 @@ async def submit_feedback(feedback_data: FeedbackCreate, current_user: dict = De
                 '''UPDATE feedback SET is_positive = $1
                    WHERE message_id = $2
                    RETURNING id, message_id, is_positive''',
-                feedback_data.is_positive, uuid.UUID(feedback_data.message_id)
+                feedback_data.is_positive, msg_uuid
             )
         else:
-            # Create new feedback
-            feedback = await conn.fetchrow(
-                '''INSERT INTO feedback (message_id, is_positive)
-                   VALUES ($1, $2)
-                   RETURNING id, message_id, is_positive''',
-                uuid.UUID(feedback_data.message_id), feedback_data.is_positive
-            )
+            # Create new feedback (guard against FK failures)
+            try:
+                feedback = await conn.fetchrow(
+                    '''INSERT INTO feedback (message_id, is_positive)
+                       VALUES ($1, $2)
+                       RETURNING id, message_id, is_positive''',
+                    msg_uuid, feedback_data.is_positive
+                )
+            except Exception as e:
+                logger.error(f"Feedback insert failed for message {msg_uuid}: {e}")
+                # If insertion fails due to FK issue, return a friendly error
+                raise HTTPException(status_code=400, detail="Unable to attach feedback to the specified message. It may not exist or the database schema may be outdated.")
     
     return FeedbackResponse(
         id=str(feedback["id"]),

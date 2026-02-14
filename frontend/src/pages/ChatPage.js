@@ -29,6 +29,7 @@ import {
   Trash2,
   ThumbsUp,
   ThumbsDown,
+  Clipboard,
   Square,
   Coins,
   LogOut,
@@ -39,6 +40,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import LiveUsersCounter from '../components/LiveUsersCounter';
+import ApplyPromoModal from '../components/ApplyPromoModal';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -70,6 +72,7 @@ export default function ChatPage() {
   const [pricingPlans, setPricingPlans] = useState([]);
   const [feedbackGiven, setFeedbackGiven] = useState({});
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showApplyPromo, setShowApplyPromo] = useState(false);
   
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -234,9 +237,50 @@ export default function ChatPage() {
     }
   };
 
-  const submitFeedback = async (messageId, isPositive) => {
+  const copyToClipboard = async (text) => {
+    // Try modern clipboard API first
     try {
-      await axios.post(
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(String(text || ''));
+        toast.success('Copied to clipboard');
+        return;
+      }
+    } catch (e) {
+      console.warn('navigator.clipboard failed, falling back to execCommand', e);
+    }
+
+    // Fallback: create a temporary textarea, select and copy
+    try {
+      const el = document.createElement('textarea');
+      el.value = String(text || '');
+      // Prevent scrolling to bottom
+      el.style.position = 'fixed';
+      el.style.left = '-9999px';
+      document.body.appendChild(el);
+      el.focus();
+      el.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(el);
+      if (successful) {
+        toast.success('Copied to clipboard');
+      } else {
+        throw new Error('execCommand copy failed');
+      }
+    } catch (e) {
+      console.error('Copy fallback failed', e);
+      toast.error('Failed to copy');
+    }
+  };
+
+  const submitFeedback = async (messageId, isPositive) => {
+    // Prevent feedback on optimistic/temporary messages
+    if (String(messageId).startsWith('temp-')) {
+      toast.error('Feedback unavailable until message is saved');
+      return;
+    }
+
+    try {
+      const response = await axios.post(
         `${API_URL}/api/feedback`,
         { message_id: messageId, is_positive: isPositive },
         {
@@ -244,9 +288,10 @@ export default function ChatPage() {
         }
       );
       setFeedbackGiven(prev => ({ ...prev, [messageId]: isPositive }));
-      toast.success(isPositive ? 'Thanks for the feedback!' : 'Thanks, we\'ll improve!');
+      toast.success(isPositive ? 'Thanks for the feedback!' : "Thanks, we'll improve!");
     } catch (error) {
-      toast.error('Failed to submit feedback');
+      const msg = error.response?.data?.detail || 'Failed to submit feedback';
+      toast.error(msg);
     }
   };
 
@@ -431,6 +476,13 @@ export default function ChatPage() {
               </span>
             </div>
 
+            <button
+              onClick={() => setShowApplyPromo(true)}
+              className="hidden sm:inline-flex ml-2 items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-white/5 text-zinc-200 hover:bg-white/10"
+            >
+              Apply Promo
+            </button>
+
             {/* User Profile Avatar */}
             <div className="relative">
               <button
@@ -479,6 +531,8 @@ export default function ChatPage() {
             onClick={() => setShowUserMenu(false)}
           />
         )}
+
+        <ApplyPromoModal open={showApplyPromo} onOpenChange={setShowApplyPromo} />
 
         {/* Chat Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
@@ -545,6 +599,14 @@ export default function ChatPage() {
                             
                             {/* Feedback buttons */}
                             <div className="flex items-center gap-2 mt-2 ml-2">
+                              <button
+                                onClick={() => copyToClipboard(msg.content)}
+                                className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
+                                data-testid={`copy-${msg.id}`}
+                                title="Copy response"
+                              >
+                                <Clipboard className="w-4 h-4" />
+                              </button>
                               <button
                                 onClick={() => submitFeedback(msg.id, true)}
                                 className={`
@@ -809,7 +871,7 @@ export default function ChatPage() {
             <div className="space-y-2">
               <p className="flex items-center gap-2">
                 <Mail className="w-4 h-4" />
-                <span className="text-zinc-500">[Your email here]</span>
+                <span className="text-zinc-500">contact.automateops.in</span>
               </p>
             </div>
           </div>

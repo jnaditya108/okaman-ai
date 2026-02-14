@@ -76,4 +76,38 @@ WHERE ai_response IS NOT NULL;
 -- DROP TABLE chats_backup;
 -- Drop after you've verified the data migration is successful
 
+-- Step 9: Create promo_codes table for promotional credit redemptions
+CREATE TABLE IF NOT EXISTS promo_codes (
+    code TEXT PRIMARY KEY,
+    credits INT NOT NULL CHECK (credits >= 0),
+    max_uses INT NULL,
+    uses INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE NULL
+);
+
+-- Optional index for lookups by expiration
+CREATE INDEX IF NOT EXISTS idx_promo_codes_expires_at ON promo_codes(expires_at);
+
+-- Step 10: Insert a demo promo code (admin can insert others manually)
+INSERT INTO promo_codes (code, credits, max_uses, uses, expires_at)
+VALUES ('WELCOME100', 100, 1000, 0, NULL)
+ON CONFLICT (code) DO NOTHING;
+
 COMMIT;
+
+-- Step 11: Ensure feedback foreign key references the new messages table
+-- This fixes errors where feedback FK still points to legacy chats_backup.
+-- Run this after migrating chat sessions/messages from the old schema.
+ALTER TABLE IF EXISTS feedback DROP CONSTRAINT IF EXISTS feedback_chat_id_fkey;
+ALTER TABLE IF EXISTS feedback DROP CONSTRAINT IF EXISTS fk_feedback_message_id;
+ALTER TABLE IF EXISTS feedback
+    ADD CONSTRAINT fk_feedback_message_id FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE;
+
+-- Optional: backfill messages from legacy chats_backup if migration wasn't run.
+-- Only run if `messages` table exists and `chats_backup` contains rows not present in `messages`.
+-- INSERT INTO messages (id, chat_id, role, content, created_at)
+-- SELECT id, id as chat_id, 'user', user_prompt, created_at FROM chats_backup WHERE user_prompt IS NOT NULL
+-- ON CONFLICT (id) DO NOTHING;
+
+-- End of migrations
