@@ -47,6 +47,17 @@ api_router = APIRouter(prefix="/api")
 # Database connection pool
 db_pool: Optional[asyncpg.Pool] = None
 
+# Configure CORS middleware FIRST (before router)
+cors_origins = os.environ.get('CORS_ORIGINS', '*').split(',')
+cors_origins = [origin.strip() for origin in cors_origins]  # Remove whitespace
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -626,14 +637,6 @@ async def health_check():
 
 # Include the router in the main app
 app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 @app.on_event("startup")
 async def startup():
