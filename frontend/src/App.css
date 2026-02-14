@@ -207,3 +207,6 @@ body {
   pointer-events: none;
   z-index: 0;
 }
+
+/* Layout adjustment when sidebar is collapsed: handled via flex layout */
+

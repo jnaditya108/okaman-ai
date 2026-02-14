@@ -111,3 +111,17 @@ ALTER TABLE IF EXISTS feedback
 -- ON CONFLICT (id) DO NOTHING;
 
 -- End of migrations
+
+-- Step 12: Create promo_redemptions table to track which user redeemed which promo
+CREATE TABLE IF NOT EXISTS promo_redemptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    promo_code TEXT NOT NULL REFERENCES promo_codes(code) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    redeemed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (promo_code, user_id)
+);
+
+-- Index to quickly lookup redemptions by user
+CREATE INDEX IF NOT EXISTS idx_promo_redemptions_user_id ON promo_redemptions(user_id);
+
+COMMIT;

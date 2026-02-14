@@ -64,7 +64,6 @@ export default function ChatPage() {
   const [inputValue, setInputValue] = useState('');
   const [selectedModel, setSelectedModel] = useState('VEO 3');
   const [isLoading, setIsLoading] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
   const [showRefillModal, setShowRefillModal] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
@@ -319,128 +318,98 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="h-screen flex bg-[#0A0A0A] overflow-hidden">
+    <div className={`h-screen flex bg-[#0A0A0A] overflow-hidden`}>
       {/* Sidebar */}
       <aside 
-        className={`
-          fixed inset-y-0 left-0 z-50 w-72 sidebar transform 
-          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          lg:relative lg:translate-x-0 transition-transform duration-200
-        `}
+        className="relative w-72 sidebar flex flex-col h-full border-r border-white/5 bg-gradient-to-b from-white/5 to-white/2"
         data-testid="sidebar"
       >
-        <div className="flex flex-col h-full">
-          {/* Sidebar Header */}
-          <div className="p-4 flex items-center justify-between border-b border-white/5">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-6 h-6 text-white" />
-              <span className="font-heading font-bold text-lg text-white">Okaman</span>
-            </div>
-            <button
-              onClick={() => setIsSidebarOpen(false)}
-              className="lg:hidden text-zinc-400 hover:text-white"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+        {/* Sidebar Header */}
+        <div className="p-4 flex items-center gap-2 border-b border-white/5">
+          <Sparkles className="w-6 h-6 text-white" />
+          <span className="font-heading font-bold text-white text-lg">Okaman</span>
+        </div>
 
-          {/* New Chat Button */}
-          <button
-            onClick={() => navigate('/chat')}
-            className="m-4 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            <span className="text-sm font-medium">New Chat</span>
-          </button>
+        {/* New Chat Button */}
+        <button
+          onClick={() => navigate('/chat')}
+          className="m-4 flex items-center gap-2 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors px-4 py-2.5">
+          <Plus className="w-4 h-4" />
+          <span className="text-sm font-medium">New Chat</span>
+        </button>
 
-          {/* Chat History Label */}
-          <div className="px-4 py-3 border-b border-white/5">
-            <span className="text-xs text-zinc-500 uppercase tracking-wider">Chat History</span>
-          </div>
+        {/* Chat History Label */}
+        <div className="px-4 py-3 border-b border-white/5">
+          <span className="text-xs text-zinc-500 uppercase tracking-wider">Chat History</span>
+        </div>
 
-          {/* Chat Sessions List */}
-          <ScrollArea className="flex-1 px-2 py-2">
-            <div className="space-y-1">
-              {chatSessions.length === 0 ? (
-                <p className="text-zinc-500 text-sm text-center py-4">No chats yet</p>
-              ) : (
-                chatSessions.map((chat) => (
+        {/* Chat Sessions List */}
+        <ScrollArea className="flex-1 px-2 py-2">
+          <div className="space-y-1">
+            {chatSessions.length === 0 ? (
+              <p className="text-zinc-500 text-sm text-center py-4">No chats yet</p>
+            ) : (
+              chatSessions.map((chat) => (
+                <button
+                  key={chat.id}
+                  onClick={() => navigate(`/chat/${chat.id}`)}
+                  className={`
+                    w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left group transition-colors
+                    ${currentChat?.id === chat.id 
+                      ? 'bg-white/10 text-white' 
+                      : 'text-zinc-400 hover:bg-white/5 hover:text-white'}
+                  `}
+                  data-testid={`chat-item-${chat.id}`}
+                >
+                  <MessageSquare className="w-4 h-4 shrink-0" />
+                  <span className="flex-1 truncate text-sm">{chat.title}</span>
                   <button
-                    key={chat.id}
-                    onClick={() => navigate(`/chat/${chat.id}`)}
-                    className={`
-                      w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left group transition-colors
-                      ${currentChat?.id === chat.id 
-                        ? 'bg-white/10 text-white' 
-                        : 'text-zinc-400 hover:bg-white/5 hover:text-white'}
-                    `}
-                    data-testid={`chat-item-${chat.id}`}
+                    onClick={(e) => deleteChat(chat.id, e)}
+                    className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400"
+                    data-testid={`delete-chat-${chat.id}`}
                   >
-                    <MessageSquare className="w-4 h-4 shrink-0" />
-                    <span className="flex-1 truncate text-sm">{chat.title}</span>
-                    <button
-                      onClick={(e) => deleteChat(chat.id, e)}
-                      className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400"
-                      data-testid={`delete-chat-${chat.id}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <Trash2 className="w-4 h-4" />
                   </button>
-                ))
-              )}
-            </div>
-          </ScrollArea>
-
-          {/* Sidebar Footer */}
-          <div className="p-4 border-t border-white/5 space-y-2">
-            <button
-              onClick={() => setShowPricing(true)}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-colors"
-              data-testid="pricing-button"
-            >
-              <CreditCard className="w-4 h-4" />
-              <span className="text-sm">Pricing</span>
-            </button>
-            <button
-              onClick={() => setShowAbout(true)}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-colors"
-              data-testid="about-button"
-            >
-              <Info className="w-4 h-4" />
-              <span className="text-sm">About Us</span>
-            </button>
-            <button
-              onClick={logout}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-red-400 transition-colors"
-              data-testid="logout-button"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="text-sm">Logout</span>
-            </button>
+                </button>
+              ))
+            )}
           </div>
+        </ScrollArea>
+
+        {/* Sidebar Footer */}
+        <div className="p-4 border-t border-white/5 space-y-2">
+          <button
+            onClick={() => setShowPricing(true)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-colors"
+            data-testid="pricing-button"
+          >
+            <CreditCard className="w-4 h-4" />
+            <span className="text-sm">Pricing</span>
+          </button>
+          <button
+            onClick={() => setShowAbout(true)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-colors"
+            data-testid="about-button"
+          >
+            <Info className="w-4 h-4" />
+            <span className="text-sm">About Us</span>
+          </button>
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-red-400 transition-colors"
+            data-testid="logout-button"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="text-sm">Logout</span>
+          </button>
         </div>
       </aside>
-
-      {/* Mobile overlay */}
-      {isSidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-          onClick={() => setIsSidebarOpen(false)}
-        />
-      )}
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <header className="header-glass sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsSidebarOpen(true)}
-              className="lg:hidden text-zinc-400 hover:text-white"
-              data-testid="menu-button"
-            >
-              <Menu className="w-6 h-6" />
-            </button>
             <div className="hidden sm:flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-white" />
               <span className="font-heading font-semibold text-white">Okaman</span>
@@ -465,12 +434,12 @@ export default function ChatPage() {
             </button>
             
             {/* Credit Display */}
-            <div 
-              className="credit-badge flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer hover:bg-white/10"
+            <div
+              className="credit-badge flex items-center gap-2 rounded-full cursor-pointer hover:bg-white/10 px-3 py-1.5"
               onClick={() => setShowPricing(true)}
               data-testid="credit-display"
             >
-              <Coins className="w-4 h-4 text-yellow-400" />
+              <Coins className="text-yellow-400 w-4 h-4" />
               <span className="text-sm font-medium text-white">
                 {user?.current_credits || 0}
               </span>
@@ -478,7 +447,7 @@ export default function ChatPage() {
 
             <button
               onClick={() => setShowApplyPromo(true)}
-              className="hidden sm:inline-flex ml-2 items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-white/5 text-zinc-200 hover:bg-white/10"
+              className="hidden sm:inline-flex ml-2 items-center gap-2 rounded-lg bg-white/5 text-zinc-200 hover:bg-white/10 px-3 py-1.5 text-sm"
             >
               Apply Promo
             </button>
@@ -546,7 +515,7 @@ export default function ChatPage() {
                   <div className="flex items-center justify-center min-h-[60vh]">
                     <div className="text-center max-w-2xl animate-fade-in">
                       <Sparkles className="w-16 h-16 text-white mx-auto mb-6" />
-                      <h1 className="font-heading text-3xl md:text-4xl font-bold text-white mb-4">
+                      <h1 className="font-heading font-bold text-white mb-4 text-3xl md:text-4xl">
                         {currentChat ? currentChat.title : 'Welcome to Okaman'}
                       </h1>
                       <p className="text-zinc-400 text-lg mb-8">
@@ -582,11 +551,11 @@ export default function ChatPage() {
                         {msg.role === 'user' ? (
                           // User Message
                           <div className="ml-auto max-w-[85%]">
-                            <div className="message-user rounded-2xl px-4 py-3">
-                              <p className="text-zinc-100 whitespace-pre-wrap">
-                                {msg.content}
-                              </p>
-                            </div>
+                              <div className="message-user rounded-2xl px-4 py-3">
+                                <p className="text-zinc-100 whitespace-pre-wrap">
+                                  {msg.content}
+                                </p>
+                              </div>
                           </div>
                         ) : (
                           // AI Response
@@ -599,14 +568,25 @@ export default function ChatPage() {
                             
                             {/* Feedback buttons */}
                             <div className="flex items-center gap-2 mt-2 ml-2">
-                              <button
-                                onClick={() => copyToClipboard(msg.content)}
-                                className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
-                                data-testid={`copy-${msg.id}`}
-                                title="Copy response"
-                              >
-                                <Clipboard className="w-4 h-4" />
-                              </button>
+                              {String(msg.id).startsWith('temp-') ? (
+                                <button
+                                  onClick={() => toast.error('Copy unavailable until message is saved')}
+                                  className="p-1.5 rounded-lg text-zinc-600"
+                                  data-testid={`copy-${msg.id}`}
+                                  title="Copy unavailable"
+                                >
+                                  <Clipboard className="w-4 h-4" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => copyToClipboard(msg.content)}
+                                  className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
+                                  data-testid={`copy-${msg.id}`}
+                                  title="Copy response"
+                                >
+                                  <Clipboard className="w-4 h-4" />
+                                </button>
+                              )}
                               <button
                                 onClick={() => submitFeedback(msg.id, true)}
                                 className={`

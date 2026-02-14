@@ -622,6 +622,14 @@ async def apply_promo(request: PromoApplyRequest, current_user: dict = Depends(g
 
         try:
             async with conn.transaction():
+                # Ensure user hasn't already redeemed this promo
+                already = await conn.fetchval(
+                    'SELECT 1 FROM promo_redemptions WHERE promo_code = $1 AND user_id = $2',
+                    code, current_user['user_id']
+                )
+                if already:
+                    raise HTTPException(status_code=400, detail="Promo code already redeemed by this user")
+
                 updated = await conn.fetchrow(
                     'UPDATE users SET current_credits = current_credits + $1 WHERE user_id = $2 RETURNING current_credits',
                     promo['credits'],
@@ -634,6 +642,12 @@ async def apply_promo(request: PromoApplyRequest, current_user: dict = Depends(g
                 await conn.execute(
                     'UPDATE promo_codes SET uses = COALESCE(uses, 0) + 1 WHERE code = $1',
                     code
+                )
+
+                # Record redemption for this user
+                await conn.execute(
+                    'INSERT INTO promo_redemptions (promo_code, user_id) VALUES ($1, $2)',
+                    code, current_user['user_id']
                 )
 
             new_credits = updated['current_credits']
