@@ -72,10 +72,7 @@ export default function ChatPage() {
   
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
-
-  const authHeaders = {
-    headers: { Authorization: `Bearer ${getToken()}` }
-  };
+  const token = getToken();
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -85,17 +82,21 @@ export default function ChatPage() {
   // Define fetch functions with useCallback
   const fetchChatSessions = useCallback(async () => {
     try {
-      const response = await axios.get(`${API_URL}/api/chats`, authHeaders);
+      const response = await axios.get(`${API_URL}/api/chats`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       setChatSessions(response.data);
     } catch (error) {
       console.error('Error fetching chats:', error);
       toast.error('Failed to load chats');
     }
-  }, [authHeaders]);
+  }, [token]);
 
   const fetchChat = useCallback(async (id) => {
     try {
-      const response = await axios.get(`${API_URL}/api/chats/${id}`, authHeaders);
+      const response = await axios.get(`${API_URL}/api/chats/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       setCurrentChat(response.data);
       setMessages(response.data.messages);
       setSelectedModel(response.data.model);
@@ -103,7 +104,7 @@ export default function ChatPage() {
       console.error('Error fetching chat:', error);
       toast.error('Failed to load chat');
     }
-  }, [authHeaders]);
+  }, [token]);
 
   const fetchPricingPlans = useCallback(async () => {
     try {
@@ -133,7 +134,9 @@ export default function ChatPage() {
   const deleteChat = async (id, e) => {
     e.stopPropagation();
     try {
-      await axios.delete(`${API_URL}/api/chats/${id}`, authHeaders);
+      await axios.delete(`${API_URL}/api/chats/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       setChatSessions(chatSessions.filter(c => c.id !== id));
       if (currentChat?.id === id) {
         navigate('/chat');
@@ -177,7 +180,9 @@ export default function ChatPage() {
           content: userMessage,
           model: selectedModel
         },
-        authHeaders
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
       );
 
       // Remove temp message and add real AI response
@@ -217,7 +222,9 @@ export default function ChatPage() {
       await axios.post(
         `${API_URL}/api/chat/stop`,
         { chat_id: currentChat?.id || 'current' },
-        authHeaders
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
       );
       setIsLoading(false);
       toast.info('Generation stopped');
@@ -231,7 +238,9 @@ export default function ChatPage() {
       await axios.post(
         `${API_URL}/api/feedback`,
         { message_id: messageId, is_positive: isPositive },
-        authHeaders
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
       );
       setFeedbackGiven(prev => ({ ...prev, [messageId]: isPositive }));
       toast.success(isPositive ? 'Thanks for the feedback!' : 'Thanks, we\'ll improve!');
@@ -245,7 +254,9 @@ export default function ChatPage() {
       const response = await axios.post(
         `${API_URL}/api/payments/initiate`,
         { plan_id: planId },
-        authHeaders
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
       );
       window.open(response.data.checkout_url, '_blank');
       toast.info('Payment window opened. Complete payment to add credits.');
