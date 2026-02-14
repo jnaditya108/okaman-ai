@@ -1,5 +1,0 @@
-{
-  "buildCommand": "npm run build",
-  "outputDirectory": "frontend/build",
-  "installCommand": "npm install ajv@8ajv-keyword@5 --save-exact --legacy-peer-deps && npm install --legacy-peer-deps"
-}
