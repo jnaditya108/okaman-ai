@@ -6,8 +6,12 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
-import { Eye, EyeOff, Mail, Lock, User, Sparkles } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, Sparkles, Loader2 } from 'lucide-react';
 import LiveUsersCounter from '../components/LiveUsersCounter';
+import EmailVerificationModal from '../components/EmailVerificationModal';
+import axios from 'axios';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 
 export default function SignupPage() {
   const [email, setEmail] = useState('');
@@ -15,7 +19,9 @@ export default function SignupPage() {
   const [username, setUsername] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { register, loginWithGoogle } = useAuth();
+  const [showVerification, setShowVerification] = useState(false);
+  const [testOtp, setTestOtp] = useState('');
+  const { loginWithGoogle } = useAuth();
 
   const handleGoogleSuccess = async (credentialResponse) => {
     setIsLoading(true);
@@ -49,13 +55,38 @@ export default function SignupPage() {
 
     setIsLoading(true);
     try {
-      await register(email, password, username || undefined);
-      toast.success('Account created! Welcome to Okaman.');
+      // Request OTP for email verification
+      const response = await axios.post(`${BACKEND_URL}/api/auth/register`, {
+        email: email,
+        password: password
+      });
+      
+      toast.success('OTP sent to your email!');
+      
+      // If development mode and test_otp is available
+      if (response.data.test_otp) {
+        setTestOtp(response.data.test_otp);
+        toast.info(`Test OTP: ${response.data.test_otp} (Development Mode)`);
+      }
+      
+      // Show verification modal
+      setShowVerification(true);
     } catch (error) {
       const message = error.response?.data?.detail || 'Registration failed. Please try again.';
       toast.error(message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleVerificationSuccess = (data) => {
+    // Data contains { access_token, user }
+    if (data.access_token) {
+      localStorage.setItem('token', data.access_token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      toast.success('Account created! Welcome to Okaman.');
+      // Redirect to chat page
+      window.location.href = '/chat';
     }
   };
 
@@ -118,7 +149,7 @@ export default function SignupPage() {
             <div className="space-y-2">
               <Label htmlFor="username" className="text-zinc-300">Username (optional)</Label>
               <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
                 <Input
                   id="username"
                   type="text"
@@ -177,9 +208,25 @@ export default function SignupPage() {
               disabled={isLoading}
               data-testid="signup-submit-button"
             >
-              {isLoading ? 'Creating account...' : 'Create Account'}
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Sending OTP...
+                </>
+              ) : (
+                'Create Account'
+              )}
             </Button>
           </form>
+
+          {/* Email Verification Modal */}
+          <EmailVerificationModal
+            open={showVerification}
+            onOpenChange={setShowVerification}
+            email={email}
+            onSuccess={handleVerificationSuccess}
+            isSignup={true}
+          />
 
           {/* Divider */}
           <div className="my-6 flex items-center gap-4">
