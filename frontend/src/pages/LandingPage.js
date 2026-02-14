@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Sparkles, Zap, Video, MessageSquare, ArrowRight, Check } from 'lucide-react';
+import LiveUsersCounter from '../components/LiveUsersCounter';
   
 export default function LandingPage() {
   return (
@@ -41,6 +42,10 @@ export default function LandingPage() {
         <div className="absolute inset-0 bg-gradient-to-b from-[#0A0A0A] via-transparent to-[#0A0A0A]" />
         
         <div className="relative max-w-5xl mx-auto text-center">
+          <div className="flex justify-center mb-8">
+            <LiveUsersCounter />
+          </div>
+
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-white/10 bg-white/5 mb-8 animate-fade-in">
             <Zap className="w-4 h-4 text-yellow-400" />
             <span className="text-sm text-zinc-300">50 Free Credits on Signup</span>

@@ -38,6 +38,7 @@ import {
   Loader2,
   ChevronDown,
 } from 'lucide-react';
+import LiveUsersCounter from '../components/LiveUsersCounter';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -407,6 +408,8 @@ export default function ChatPage() {
           </div>
 
           <div className="flex items-center gap-4">
+            <LiveUsersCounter />
+            
             <button
               onClick={() => setShowContact(true)}
               className="hidden sm:flex items-center gap-2 text-zinc-400 hover:text-white text-sm"
