@@ -38,6 +38,7 @@ import {
   Mail,
   Loader2,
   ChevronDown,
+  Gift,
 } from 'lucide-react';
 import LiveUsersCounter from '../components/LiveUsersCounter';
 import ApplyPromoModal from '../components/ApplyPromoModal';
@@ -405,6 +406,14 @@ export default function ChatPage() {
 
         {/* Sidebar Footer */}
         <div className="p-4 border-t border-white/5 space-y-2">
+          <button
+            onClick={() => setShowApplyPromo(true)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-colors"
+            data-testid="apply-promo-sidebar-button"
+          >
+            <Gift className="w-4 h-4" />
+            <span className="text-sm">Apply Promo</span>
+          </button>
           <button
             onClick={() => setShowPricing(true)}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-colors"
