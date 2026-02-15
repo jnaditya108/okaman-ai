@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
+import okaman_logo from '../IMG_1960.PNG';
 import { Button } from '../components/ui/button';
 import { ScrollArea } from '../components/ui/scroll-area';
 import {
@@ -20,7 +21,6 @@ import {
 } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import {
-  Sparkles,
   Send,
   Menu,
   X,
@@ -39,11 +39,20 @@ import {
   Loader2,
   ChevronDown,
   Gift,
+  Instagram,
 } from 'lucide-react';
 import LiveUsersCounter from '../components/LiveUsersCounter';
 import ApplyPromoModal from '../components/ApplyPromoModal';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
+
+// DodoPay URLs mapping
+const DODO_PAY_URLS = {
+  'plan_1m': 'https://test.checkout.dodopayments.com/buy/pdt_0NYZ1ARRyeZhG8RhYeMXj?quantity=1',
+  'plan_3m': 'https://test.checkout.dodopayments.com/buy/pdt_0NYZ1ARRyeZhG8RhYeMXj?quantity=1',
+  'plan_6m': 'https://test.checkout.dodopayments.com/buy/pdt_0NYZ1ARRyeZhG8RhYeMXj?quantity=1',
+  'plan_12m': 'https://test.checkout.dodopayments.com/buy/pdt_0NYZ1ARRyeZhG8RhYeMXj?quantity=1',
+};
 
 const AI_MODELS = [
   { id: 'VEO 3', name: 'VEO 3', description: 'Google Video AI' },
@@ -80,6 +89,34 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const token = getToken();
+
+  // Handle payment return redirect params (e.g., ?payment=return&status=success&credits=500)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('payment') === 'return') {
+        const status = params.get('status');
+        const creditsAdded = parseInt(params.get('credits') || '0', 10) || 0;
+        const successValues = ['success', 'completed', 'paid', '1', 'true', 'True'];
+
+        if (status && successValues.includes(String(status))) {
+          toast.success(`Payment successful — ${creditsAdded} credits added to your wallet.`);
+          if (user && typeof updateCredits === 'function') {
+            const current = (user.current_credits || 0);
+            updateCredits(current + creditsAdded);
+          }
+        } else {
+          toast.error('Payment was not successful.');
+        }
+
+        // Remove query params from URL to avoid repeated handling
+        const url = window.location.pathname;
+        window.history.replaceState({}, document.title, url);
+      }
+    } catch (e) {
+      // ignore parsing errors
+    }
+  }, [user, updateCredits]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -309,19 +346,24 @@ export default function ChatPage() {
     }
   };
 
-  const initiatePurchase = async (planId) => {
-    try {
-      const response = await axios.post(
-        `${API_URL}/api/payments/initiate`,
-        { plan_id: planId },
-        {
-          headers: { Authorization: `Bearer ${token}` }
+  const initiatePurchase = (planId) => {
+    let paymentUrl = DODO_PAY_URLS[planId];
+    if (paymentUrl) {
+      // Add customer email as parameter if available
+      if (user && user.email) {
+        const separator = paymentUrl.includes('?') ? '&' : '?';
+        paymentUrl += `${separator}customer_email=${encodeURIComponent(user.email)}`;
+        // append plan id so it round-trips back to our return handler
+        paymentUrl += `&plan_id=${encodeURIComponent(planId)}`;
+        // append return token (JWT) so we can identify the user on redirect
+        if (token) {
+          paymentUrl += `&return_token=${encodeURIComponent(token)}`;
         }
-      );
-      window.open(response.data.checkout_url, '_blank');
-      toast.info('Payment window opened. Complete payment to add credits.');
-    } catch (error) {
-      toast.error('Failed to initiate payment');
+      }
+      window.open(paymentUrl, '_blank');
+      toast.info('Opening DodoPay payment portal. Complete payment to add credits to your wallet.');
+    } else {
+      toast.error('Payment URL not found for this plan');
     }
   };
 
@@ -347,7 +389,7 @@ export default function ChatPage() {
           {/* Sidebar Header */}
           <div className="p-4 flex items-center justify-between border-b border-white/5">
             <div className="flex items-center gap-2">
-              <Sparkles className="w-6 h-6 text-white" />
+              <img src={okaman_logo} alt="Okaman" className="w-6 h-6 rounded-full" />
               <span className="font-heading font-bold text-white text-lg">Okaman</span>
             </div>
             <button
@@ -463,7 +505,7 @@ export default function ChatPage() {
               <Menu className="w-6 h-6" />
             </button>
             <div className="hidden sm:flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-white" />
+              <img src={okaman_logo} alt="Okaman" className="w-5 h-5 rounded-full" />
               <span className="font-heading font-semibold text-white">Okaman</span>
             </div>
             {currentChat && (
@@ -566,7 +608,7 @@ export default function ChatPage() {
                   // Welcome Screen
                   <div className="flex items-center justify-center min-h-[60vh]">
                     <div className="text-center max-w-2xl animate-fade-in">
-                      <Sparkles className="w-16 h-16 text-white mx-auto mb-6" />
+                      <img src={okaman_logo} alt="Okaman" className="w-16 h-16 rounded-full mx-auto mb-6" />
                       <h1 className="font-heading font-bold text-white mb-4 text-3xl md:text-4xl">
                         {currentChat ? currentChat.title : 'Welcome to Okaman'}
                       </h1>
@@ -894,16 +936,22 @@ export default function ChatPage() {
           </DialogHeader>
           
           <div className="mt-4 space-y-4 text-zinc-400">
-            {/* 
-              ============================================================
-              TODO: ADD YOUR CONTACT INFORMATION HERE
-              ============================================================
-            */}
             <p>Have questions or feedback? We'd love to hear from you!</p>
-            <div className="space-y-2">
+            <div className="space-y-3">
               <p className="flex items-center gap-2">
                 <Mail className="w-4 h-4" />
-                <span className="text-zinc-500">contact.automateops.in</span>
+                <span className="text-zinc-500">contact.automateops@gmail.com</span>
+              </p>
+              <p className="flex items-center gap-2">
+                <Instagram className="w-4 h-4" />
+                <a 
+                  href="https://www.instagram.com/okaman.ai?igsh=YTc2ZmIxdWlkaHMy&utm_source=qr" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  @okaman.ai
+                </a>
               </p>
             </div>
           </div>

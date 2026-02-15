@@ -15,6 +15,7 @@ from jose import JWTError, jwt
 import httpx
 from google.auth.transport import requests
 from google.oauth2 import id_token
+from starlette.responses import RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -237,6 +238,11 @@ class PaymentInitiate(BaseModel):
 class PaymentResponse(BaseModel):
     payment_id: str
     checkout_url: str
+
+class DodoPayWebhook(BaseModel):
+    """DodoPay webhook payload model"""
+    event: str  # e.g., 'charge.success', 'charge.failed'
+    data: dict  # Contains payment details
 
 # ============================================================
 # AUTHENTICATION HELPERS
@@ -1141,26 +1147,152 @@ async def initiate_payment(payment_data: PaymentInitiate, current_user: dict = D
 @api_router.post("/payments/webhook")
 async def payment_webhook(request: Request):
     """Handle Dodo Payments webhook"""
-    data = await request.json()
-    
-    payment_id = data.get("payment_id")
-    user_id = data.get("user_id")
-    credits = data.get("credits", 0)
-    status = data.get("status")
-    
-    if status == "success" or status == "completed":
-        if db_pool and user_id:
-            async with db_pool.acquire() as conn:
-                await conn.execute(
-                    '''UPDATE users SET 
-                       current_credits = current_credits + $1,
-                       last_payment_date = NOW()
-                       WHERE user_id = $2''',
-                    credits, uuid.UUID(user_id)
-                )
-            logger.info(f"Payment {payment_id} completed. Added {credits} credits to user {user_id}.")
-    
-    return {"message": "Webhook processed"}
+    try:
+        data = await request.json()
+        logger.info(f"DodoPay webhook received: {data}")
+        
+        # DodoPay sends event type and payment details
+        event = data.get("event", "")
+        webhook_data = data.get("data", {})
+        
+        # Map product IDs to plan credits
+        product_to_credits = {
+            "pdt_0NYYvpV6ft1XmarGFUA9u": 500,   # Test product - 500 credits
+            "pdt_0NYYpjvpbEHklytDi2B1O": 500,    # 1 Month - 500 credits
+            "pdt_0NYYq39DljpB9vMiGHPyp": 1700,   # 3 Months - 1700 credits
+            "pdt_0NYYqVBueOnyps6hCRHvt": 3500,   # 6 Months - 3500 credits
+            "pdt_0NYYqEgMJwiA01n45tV5Z": 7500,   # 1 Year - 7500 credits
+        }
+        
+        # Handle successful payment
+        if event in ["charge.success", "payment.success", "charge.completed"]:
+            product_id = webhook_data.get("product_id") or webhook_data.get("metadata", {}).get("product_id")
+            customer_email = webhook_data.get("customer_email") or webhook_data.get("email")
+            
+            credits = product_to_credits.get(product_id, 0)
+            
+            if credits > 0 and customer_email and db_pool:
+                async with db_pool.acquire() as conn:
+                    # Find user by email
+                    user = await conn.fetchrow(
+                        'SELECT user_id FROM users WHERE email = $1',
+                        customer_email
+                    )
+                    
+                    if user:
+                        user_id = user['user_id']
+                        # Update user credits
+                        await conn.execute(
+                            '''UPDATE users SET 
+                               current_credits = current_credits + $1,
+                               last_payment_date = NOW()
+                               WHERE user_id = $2''',
+                            credits, user_id
+                        )
+                        logger.info(f"Payment successful. Added {credits} credits to user {customer_email}")
+                    else:
+                        logger.warning(f"No user found for email: {customer_email}")
+        
+        return {"message": "Webhook processed", "status": "ok"}
+    except Exception as e:
+        logger.error(f"Error processing DodoPay webhook: {e}")
+        return {"message": "Webhook processed", "status": "error"}
+
+
+# ============================================================
+# PAYMENT RETURN (Redirect handler)
+#
+# Dodo Payments may redirect users back to a configured return URL
+# with query parameters describing the payment. This endpoint
+# handles that redirect, credits the user's account, and then
+# redirects the user back to the frontend with a status.
+# ============================================================
+@api_router.get("/payments/return")
+async def payment_return(request: Request):
+    try:
+        params = dict(request.query_params)
+        logger.info(f"Payment return called with params: {params}")
+
+        # Common parameter names DodoPay might send
+        status = params.get('status') or params.get('payment_status') or params.get('payment_state') or params.get('state')
+        product_id = params.get('product_id') or params.get('pdt') or params.get('item') or params.get('product')
+        plan_id = params.get('plan_id')
+        token = params.get('return_token') or params.get('token')
+        customer_email = params.get('customer_email') or params.get('email')
+
+        # Map plan/product to credits
+        plan_to_credits = {
+            'plan_1m': 500,
+            'plan_3m': 1700,
+            'plan_6m': 3500,
+            'plan_12m': 7500,
+        }
+        product_to_credits = {
+            'pdt_0NYZ1ARRyeZhG8RhYeMXj': 500,   # Test product - 500 credits (new)
+            'pdt_0NYYpjvpbEHklytDi2B1O': 500,    # 1 Month - 500 credits
+            'pdt_0NYYq39DljpB9vMiGHPyp': 1700,   # 3 Months - 1700 credits
+            'pdt_0NYYqVBueOnyps6hCRHvt': 3500,   # 6 Months - 3500 credits
+            'pdt_0NYYqEgMJwiA01n45tV5Z': 7500,   # 1 Year - 7500 credits
+        }
+
+        credits = 0
+        if plan_id:
+            credits = plan_to_credits.get(plan_id, 0)
+        elif product_id:
+            credits = product_to_credits.get(product_id, 0)
+
+        # Consider these values as success indicators
+        success_values = {'success', 'completed', 'paid', '1', 'true', 'True'}
+
+        if str(status) in success_values:
+            # Identify user by token (JWT) first, then by email
+            user_uuid = None
+            if token:
+                try:
+                    payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+                    user_id = payload.get('sub')
+                    if user_id:
+                        user_uuid = uuid.UUID(user_id)
+                except Exception as e:
+                    logger.warning(f"Failed to decode return token: {e}")
+
+            if db_pool and (user_uuid or customer_email):
+                async with db_pool.acquire() as conn:
+                    if user_uuid:
+                        await conn.execute(
+                            '''UPDATE users SET 
+                               current_credits = current_credits + $1,
+                               last_payment_date = NOW()
+                               WHERE user_id = $2''',
+                            credits, user_uuid
+                        )
+                        logger.info(f"Payment return: Added {credits} credits to user_id {user_uuid}")
+                    else:
+                        user = await conn.fetchrow('SELECT user_id FROM users WHERE email = $1', customer_email)
+                        if user:
+                            await conn.execute(
+                                '''UPDATE users SET 
+                                   current_credits = current_credits + $1,
+                                   last_payment_date = NOW()
+                                   WHERE user_id = $2''',
+                                credits, user['user_id']
+                            )
+                            logger.info(f"Payment return: Added {credits} credits to {customer_email}")
+                        else:
+                            logger.warning(f"Payment return: No user found for email {customer_email}")
+        else:
+            logger.info(f"Payment return status not successful: {status}")
+
+        # Redirect user back to frontend with query status
+        frontend_base = os.environ.get('FRONTEND_URL', '/')
+        redirect_to = f"{frontend_base}?payment=return&status={status}&credits={credits}"
+        return RedirectResponse(redirect_to)
+
+    except Exception as e:
+        logger.error(f"Error handling payment return: {e}")
+        frontend_base = os.environ.get('FRONTEND_URL', '/')
+        return RedirectResponse(f"{frontend_base}?payment=return&status=error")
+
 
 # ============================================================
 # CREDITS ENDPOINT
