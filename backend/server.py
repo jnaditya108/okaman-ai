@@ -376,14 +376,7 @@ async def register(user_data: UserRegister):
     except Exception as e:
         logger.error(f"Failed to send signup OTP via N8N: {e}")
     
-    # In development, return the OTP for testing purposes
-    is_development = os.environ.get('ENVIRONMENT', 'development').lower() == 'development'
-    response = {"message": "OTP sent to your email. Please verify to complete signup."}
-    if is_development:
-        response["test_otp"] = otp  # Only for development/testing
-        logger.info(f"DEVELOPMENT MODE: OTP returned in response for testing")
-    
-    return response
+    return {"message": "OTP sent to your email. Please verify to complete signup."}
 
 @api_router.post("/auth/verify-signup", response_model=TokenResponse)
 async def verify_signup(request: VerifyOTPRequest):
@@ -712,15 +705,7 @@ async def forgot_password(request: ForgotPasswordRequest):
     except Exception as e:
         logger.error(f"Failed to send OTP via N8N: {e}")
     
-    # In development, return the OTP for testing purposes
-    # In production, remove this for security
-    is_development = os.environ.get('ENVIRONMENT', 'development').lower() == 'development'
-    response = {"message": "If account exists, OTP will be sent to email"}
-    if is_development:
-        response["test_otp"] = otp  # Only for development/testing
-        logger.info(f"DEVELOPMENT MODE: OTP returned in response for testing")
-    
-    return response
+    return {"message": "If account exists, OTP will be sent to email"}
 
 @api_router.post("/auth/verify-otp", response_model=OTPVerifyResponse)
 async def verify_otp(request: VerifyOTPRequest):
