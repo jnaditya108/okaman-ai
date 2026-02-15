@@ -64,6 +64,9 @@ export default function ChatPage() {
   const [inputValue, setInputValue] = useState('');
   const [selectedModel, setSelectedModel] = useState('VEO 3');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(
+    typeof window !== 'undefined' && window.innerWidth >= 1024
+  );
   const [showPricing, setShowPricing] = useState(false);
   const [showRefillModal, setShowRefillModal] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
@@ -133,6 +136,17 @@ export default function ChatPage() {
       setMessages([]);
     }
   }, [chatId, fetchChat]);
+
+  // Handle window resize - close sidebar on mobile, open on desktop
+  useEffect(() => {
+    const handleResize = () => {
+      const isLargeScreen = window.innerWidth >= 1024;
+      setIsSidebarOpen(isLargeScreen);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const deleteChat = async (id, e) => {
     e.stopPropagation();
@@ -318,17 +332,30 @@ export default function ChatPage() {
   };
 
   return (
-    <div className={`h-screen flex bg-[#0A0A0A] overflow-hidden`}>
+    <div className="h-screen flex bg-[#0A0A0A] overflow-hidden">
       {/* Sidebar */}
       <aside 
-        className="relative w-72 sidebar flex flex-col h-full border-r border-white/5 bg-gradient-to-b from-white/5 to-white/2"
+        className={`
+          fixed inset-y-0 left-0 z-50 w-72 sidebar transform 
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          lg:relative lg:translate-x-0 transition-transform duration-200
+        `}
         data-testid="sidebar"
       >
-        {/* Sidebar Header */}
-        <div className="p-4 flex items-center gap-2 border-b border-white/5">
-          <Sparkles className="w-6 h-6 text-white" />
-          <span className="font-heading font-bold text-white text-lg">Okaman</span>
-        </div>
+        <div className="flex flex-col h-full border-r border-white/5 bg-gradient-to-b from-white/5 to-white/2">
+          {/* Sidebar Header */}
+          <div className="p-4 flex items-center justify-between border-b border-white/5">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-6 h-6 text-white" />
+              <span className="font-heading font-bold text-white text-lg">Okaman</span>
+            </div>
+            <button
+              onClick={() => setIsSidebarOpen(false)}
+              className="lg:hidden text-zinc-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
 
         {/* New Chat Button */}
         <button
@@ -403,13 +430,29 @@ export default function ChatPage() {
             <span className="text-sm">Logout</span>
           </button>
         </div>
+        </div>
       </aside>
+
+      {/* Mobile overlay */}
+      {isSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <header className="header-glass sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="lg:hidden text-zinc-400 hover:text-white"
+              data-testid="menu-button"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
             <div className="hidden sm:flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-white" />
               <span className="font-heading font-semibold text-white">Okaman</span>
